@@ -16,7 +16,6 @@ SCREEN_WIDTH = 960
 SCREEN_HEIGHT = 720
 FPS = 60
 
-# --- MEDIDAS REDUZIDAS PARA ENCAIXAR COM O EDITOR ---
 TILE_SIZE = 50
 NUM_ROWS = 10
 FLOOR_Y = 600
@@ -56,7 +55,7 @@ class SoundManager:
         caminho_abs = os.path.join(BASE_DIR, "assets", "sounds", "fase1.mp3")
         caminho_rel = "assets/sounds/fase1.mp3"
         self.musica_fase1 = caminho_abs if os.path.exists(caminho_abs) else caminho_rel
-        
+
         if self.sounds_enabled and os.path.exists(self.musica_fase1):
             try:
                 pygame.mixer.music.load(self.musica_fase1)
@@ -126,10 +125,10 @@ class Slime(pygame.sprite.Sprite):
         self.jump_buffer = 0
         self.modo = "GOSMA"
         self.color = COLOR_SLIME_GOSMA
-        
+
         self.gravity = 1.15
         self.jump_strength = -16.5
-        
+
         self.is_grounded = False
         self.current_width = float(self.base_size)
         self.current_height = float(self.base_size)
@@ -145,10 +144,10 @@ class Slime(pygame.sprite.Sprite):
 
     def get_hitbox(self) -> pygame.Rect:
         return pygame.Rect(
-            int(self.rect.x + 6),
-            int(self.rect.y + 4),
-            int(self.rect.width - 12),
-            int(self.rect.height - 3)
+            int(self.rect.x + 8),
+            int(self.rect.y + 6),
+            int(self.rect.width - 16),
+            int(self.rect.height - 8)
         )
 
     def mudar_modo(self, novo_modo: str):
@@ -237,7 +236,7 @@ def main():
     pygame.init()
     sound_mgr = SoundManager()
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-    pygame.display.set_caption("Slime Dash - Engine Atualizada 50px")
+    pygame.display.set_caption("Slime Dash - Engine GD Corrigida")
     clock = pygame.time.Clock()
 
     font = pygame.font.SysFont("Consolas", 18, bold=True)
@@ -343,7 +342,7 @@ def main():
                         sound_mgr.parar_musica()
                     elif estado_jogo == "PAUSADO":
                         estado_jogo = "JOGANDO"
-                        sound_mgr.reiniciar_musica() 
+                        sound_mgr.reiniciar_musica()
 
                 elif event.key == pygame.K_r:
                     if estado_jogo != "MENU":
@@ -412,8 +411,8 @@ def main():
         for rel_x, y_pos, char, tile_id in mapa_objetos:
             obj_x = rel_x + TARGET_X - distancia_percorrida
             if -100 < obj_x < SCREEN_WIDTH + 100:
-                if char == "^": espinhos_chao_rects.append(pygame.Rect(obj_x + 12, y_pos + 16, TILE_SIZE - 24, TILE_SIZE - 16))
-                elif char == "v": espinhos_teto_rects.append(pygame.Rect(obj_x + 12, y_pos, TILE_SIZE - 24, TILE_SIZE - 16))
+                if char == "^": espinhos_chao_rects.append(pygame.Rect(obj_x + 14, y_pos + 18, TILE_SIZE - 28, TILE_SIZE - 18))
+                elif char == "v": espinhos_teto_rects.append(pygame.Rect(obj_x + 14, y_pos, TILE_SIZE - 28, TILE_SIZE - 18))
                 elif char == "1": blocos_rects.append(pygame.Rect(obj_x, y_pos, TILE_SIZE, TILE_SIZE))
                 elif char == "h": blocos_rects.append(pygame.Rect(obj_x, y_pos + TILE_SIZE // 2, TILE_SIZE, TILE_SIZE // 2))
                 elif char == "~": lavas_rects.append(pygame.Rect(obj_x, y_pos + TILE_SIZE - 14, TILE_SIZE, 14))
@@ -456,23 +455,43 @@ def main():
                 if slime_hb.colliderect(spike):
                     reset_game()
 
+            # --- NOVO SISTEMA DE COLISÃO COM BLOCOS (SEGURO E SEM MORTES FANTASMAS) ---
             em_cima_de_bloco = False
             for block in blocos_rects:
                 if slime_hb.colliderect(block):
-                    if slime.gravity > 0 and slime.vel_y >= 0 and slime.y <= block.top + 24:
-                        slime.y = float(block.top)
-                        slime.vel_y = 0.0
-                        slime.is_grounded = True
-                        em_cima_de_bloco = True
-                        slime.tentar_pular(sound_mgr)
-                    elif slime.gravity < 0 and slime.vel_y <= 0 and slime.rect.top >= block.bottom - 24:
-                        slime.y = float(block.bottom)
-                        slime.vel_y = 0.0
-                        slime.is_grounded = True
-                        em_cima_de_bloco = True
-                        slime.tentar_pular(sound_mgr)
-                    else:
-                        reset_game()
+                    if slime.gravity > 0:
+                        # Pousar no topo do bloco (caindo ou parado no topo)
+                        if slime.vel_y >= 0 and slime_hb.bottom <= block.top + 18:
+                            slime.y = float(block.top)
+                            slime.vel_y = 0.0
+                            slime.is_grounded = True
+                            em_cima_de_bloco = True
+                            slime.tentar_pular(sound_mgr)
+                            continue
+                        # Se estiver subindo (pulando) e encostando no bloco onde pisava, NÃO MORRE!
+                        elif slime.vel_y < 0 and slime_hb.bottom <= block.top + 22:
+                            continue
+
+                    elif slime.gravity < 0:
+                        # Pousar no teto (Modo Neve)
+                        if slime.vel_y <= 0 and slime_hb.top >= block.bottom - 18:
+                            slime.y = float(block.bottom + slime.current_height)
+                            slime.vel_y = 0.0
+                            slime.is_grounded = True
+                            em_cima_de_bloco = True
+                            slime.tentar_pular(sound_mgr)
+                            continue
+                        elif slime.vel_y > 0 and slime_hb.top >= block.bottom - 22:
+                            continue
+
+                    # Só morre se REALMENTE bater de frente na parede lateral do bloco!
+                    if slime_hb.right > block.left + 4 and slime_hb.left < block.left:
+                        if slime.gravity > 0 and slime_hb.bottom > block.top + 12:
+                            reset_game()
+                            break
+                        elif slime.gravity < 0 and slime_hb.top < block.bottom - 12:
+                            reset_game()
+                            break
 
             if not em_cima_de_bloco and slime.y < FLOOR_Y:
                 if slime.modo != "CHICLETE": slime.is_grounded = False
