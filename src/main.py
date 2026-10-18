@@ -144,10 +144,10 @@ class Slime(pygame.sprite.Sprite):
 
     def get_hitbox(self) -> pygame.Rect:
         return pygame.Rect(
-            int(self.rect.x + 8),
-            int(self.rect.y + 6),
-            int(self.rect.width - 16),
-            int(self.rect.height - 8)
+            int(self.x - 13),
+            int(self.y - 38),
+            26,
+            36
         )
 
     def mudar_modo(self, novo_modo: str):
@@ -236,12 +236,13 @@ def main():
     pygame.init()
     sound_mgr = SoundManager()
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-    pygame.display.set_caption("Slime Dash - Engine GD Corrigida")
+    pygame.display.set_caption("Slime Dash - Tolerância de Pulo Aplicada")
     clock = pygame.time.Clock()
 
-    font = pygame.font.SysFont("Consolas", 18, bold=True)
+    font = pygame.font.SysFont("Consolas", 15, bold=True)
     attempt_font = pygame.font.SysFont("Consolas", 58, bold=True)
     title_font = pygame.font.SysFont("Consolas", 42, bold=True)
+    debug_font = pygame.font.SysFont("Consolas", 18, bold=True)
 
     scroll_speed = 6.0
     distancia_total_musica = scroll_speed * FPS * DURACAO_MUSICA_SEGUNDOS
@@ -265,6 +266,10 @@ def main():
     slime = Slime(x=SLIME_START_X, y=FLOOR_Y)
     particles = []
 
+    show_debug = True
+    causa_morte = ""
+    morto_parado = False
+
     def pre_carregar_mapa():
         nonlocal fim_fase_x_relativo, mapa_objetos
         mapa_objetos.clear()
@@ -282,14 +287,17 @@ def main():
     pre_carregar_mapa()
 
     def iniciar_fase():
-        nonlocal estado_jogo, timer_intro_wait, distancia_percorrida
+        nonlocal estado_jogo, timer_intro_wait, distancia_percorrida, causa_morte, morto_parado
         estado_jogo = "INTRO_WAIT"
         timer_intro_wait = 0
         distancia_percorrida = 0.0
+        causa_morte = ""
+        morto_parado = False
         slime.mudar_modo("GOSMA")
         slime.x = SLIME_START_X
         slime.y = FLOOR_Y
         slime.vel_y = 0
+        slime.jump_buffer = 0
         slime.update_rect()
         sound_mgr.iniciar_musica()
 
@@ -308,19 +316,35 @@ def main():
         vitoria = False
         iniciar_fase()
 
-    def reset_game():
-        nonlocal tentativas, moedas_coletadas, vitoria, distancia_percorrida, estado_jogo
+    def reset_game(motivo="", dados_extras=""):
+        nonlocal tentativas, vitoria, causa_morte, morto_parado
+        causa_morte = motivo
+        morto_parado = True
         tentativas += 1
         vitoria = False
         sound_mgr.tocar(sound_mgr.sfx_death)
-        sound_mgr.reiniciar_musica()
+        sound_mgr.parar_musica()
 
+        print("\n" + "="*60)
+        print(f"[DEBUG_LOG] Tentativa {tentativas - 1} FALHOU!")
+        print(f"  Motivo: {motivo}")
+        print(f"  Slime -> X: {slime.x:.1f} | Y: {slime.y:.1f} | Vel_Y: {slime.vel_y:.2f} | Modo: {slime.modo} | Grounded: {slime.is_grounded}")
+        print(f"  Distancia Percorrida: {distancia_percorrida:.1f}px")
+        if dados_extras:
+            print(f"  Detalhes do Objeto: {dados_extras}")
+        print("="*60 + "\n")
+
+    def concluir_reset():
+        nonlocal estado_jogo, distancia_percorrida, checkpoint, morto_parado
+        morto_parado = False
+        sound_mgr.reiniciar_musica()
         if checkpoint is not None:
             distancia_percorrida = checkpoint["distancia"]
             slime.mudar_modo(checkpoint["modo"])
             slime.x = TARGET_X
             slime.y = checkpoint["y"]
             slime.vel_y = 0
+            slime.jump_buffer = 0
             slime.update_rect()
             estado_jogo = "JOGANDO"
         else:
@@ -336,36 +360,43 @@ def main():
                 running = False
 
             elif event.type == pygame.KEYDOWN:
-                if event.key in (pygame.K_ESCAPE, pygame.K_p):
-                    if estado_jogo in ("JOGANDO", "INTRO_WAIT", "INTRO_RUN"):
-                        estado_jogo = "PAUSADO"
+                if event.key == pygame.K_g:
+                    show_debug = not show_debug
+
+                if morto_parado:
+                    if event.key == pygame.K_SPACE:
+                        concluir_reset()
+                else:
+                    if event.key in (pygame.K_ESCAPE, pygame.K_p):
+                        if estado_jogo in ("JOGANDO", "INTRO_WAIT", "INTRO_RUN"):
+                            estado_jogo = "PAUSADO"
+                            sound_mgr.parar_musica()
+                        elif estado_jogo == "PAUSADO":
+                            estado_jogo = "JOGANDO"
+                            sound_mgr.reiniciar_musica()
+
+                    elif event.key == pygame.K_r:
+                        if estado_jogo != "MENU":
+                            reset_game("RECOMEÇO VOLUNTÁRIO")
+
+                    elif event.key == pygame.K_m:
+                        estado_jogo = "MENU"
                         sound_mgr.parar_musica()
-                    elif estado_jogo == "PAUSADO":
-                        estado_jogo = "JOGANDO"
-                        sound_mgr.reiniciar_musica()
 
-                elif event.key == pygame.K_r:
-                    if estado_jogo != "MENU":
-                        reset_game()
-
-                elif event.key == pygame.K_m:
-                    estado_jogo = "MENU"
-                    sound_mgr.parar_musica()
-
-                elif event.key == pygame.K_SPACE:
-                    if estado_jogo == "MENU":
-                        iniciar_fase()
-                    elif estado_jogo == "PAUSADO":
-                        estado_jogo = "JOGANDO"
-                        sound_mgr.reiniciar_musica()
-                    elif vitoria:
-                        if id_nivel_atual < len(NIVEIS): carregar_nivel(id_nivel_atual + 1)
-                        else: carregar_nivel(1)
-                    elif estado_jogo == "JOGANDO":
-                        slime.solicitar_pulo()
+                    elif event.key == pygame.K_SPACE:
+                        if estado_jogo == "MENU":
+                            iniciar_fase()
+                        elif estado_jogo == "PAUSADO":
+                            estado_jogo = "JOGANDO"
+                            sound_mgr.reiniciar_musica()
+                        elif vitoria:
+                            if id_nivel_atual < len(NIVEIS): carregar_nivel(id_nivel_atual + 1)
+                            else: carregar_nivel(1)
+                        elif estado_jogo == "JOGANDO":
+                            slime.solicitar_pulo()
 
         keys = pygame.key.get_pressed()
-        space_held = keys[pygame.K_SPACE]
+        space_held = keys[pygame.K_SPACE] if (estado_jogo == "JOGANDO" and not morto_parado) else False
 
         frames_contador += 1
         if frames_contador % frames_por_batida == 0: beat_pulse = 1.0
@@ -373,30 +404,34 @@ def main():
 
         attempt_text_x = float(SCREEN_WIDTH // 2)
 
-        if estado_jogo == "INTRO_WAIT":
-            distancia_percorrida = 0.0
-            slime.x = SLIME_START_X
-            slime.update_rect()
-            attempt_text_x = float(SCREEN_WIDTH // 2)
-            timer_intro_wait += 1
-            if timer_intro_wait >= 30: estado_jogo = "INTRO_RUN"
-
-        elif estado_jogo == "INTRO_RUN":
-            distancia_percorrida = 0.0
-            slime.x += 4.5
-            slime.y = FLOOR_Y
-            slime.is_grounded = True
-            slime.update_rect()
-            attempt_text_x = float(SCREEN_WIDTH // 2)
-            if slime.x >= TARGET_X:
-                slime.x = TARGET_X
+        if not morto_parado:
+            if estado_jogo == "INTRO_WAIT":
+                distancia_percorrida = 0.0
+                slime.x = SLIME_START_X
+                slime.jump_buffer = 0
                 slime.update_rect()
-                estado_jogo = "JOGANDO"
+                attempt_text_x = float(SCREEN_WIDTH // 2)
+                timer_intro_wait += 1
+                if timer_intro_wait >= 30: estado_jogo = "INTRO_RUN"
 
-        elif estado_jogo == "JOGANDO" and not vitoria:
-            distancia_percorrida += scroll_speed
-            slime.update(FLOOR_Y, CEILING_Y, particles, space_held, sound_mgr)
-            attempt_text_x = (SCREEN_WIDTH // 2) - distancia_percorrida
+            elif estado_jogo == "INTRO_RUN":
+                distancia_percorrida = 0.0
+                slime.x += 4.5
+                slime.y = FLOOR_Y
+                slime.is_grounded = True
+                slime.jump_buffer = 0
+                slime.update_rect()
+                attempt_text_x = float(SCREEN_WIDTH // 2)
+                if slime.x >= TARGET_X:
+                    slime.x = TARGET_X
+                    slime.jump_buffer = 0
+                    slime.update_rect()
+                    estado_jogo = "JOGANDO"
+
+            elif estado_jogo == "JOGANDO" and not vitoria:
+                distancia_percorrida += scroll_speed
+                slime.update(FLOOR_Y, CEILING_Y, particles, space_held, sound_mgr)
+                attempt_text_x = (SCREEN_WIDTH // 2) - distancia_percorrida
 
         for p in particles[:]:
             p.update()
@@ -408,22 +443,22 @@ def main():
 
         fim_fase_x = fim_fase_x_relativo + TARGET_X - distancia_percorrida
 
-        for rel_x, y_pos, char, tile_id in mapa_objetos:
+        for rel_x, y_pos, char, col_idx in mapa_objetos:
             obj_x = rel_x + TARGET_X - distancia_percorrida
             if -100 < obj_x < SCREEN_WIDTH + 100:
-                if char == "^": espinhos_chao_rects.append(pygame.Rect(obj_x + 14, y_pos + 18, TILE_SIZE - 28, TILE_SIZE - 18))
-                elif char == "v": espinhos_teto_rects.append(pygame.Rect(obj_x + 14, y_pos, TILE_SIZE - 28, TILE_SIZE - 18))
-                elif char == "1": blocos_rects.append(pygame.Rect(obj_x, y_pos, TILE_SIZE, TILE_SIZE))
-                elif char == "h": blocos_rects.append(pygame.Rect(obj_x, y_pos + TILE_SIZE // 2, TILE_SIZE, TILE_SIZE // 2))
-                elif char == "~": lavas_rects.append(pygame.Rect(obj_x, y_pos + TILE_SIZE - 14, TILE_SIZE, 14))
+                if char == "^": espinhos_chao_rects.append((pygame.Rect(obj_x + 14, y_pos + 18, TILE_SIZE - 28, TILE_SIZE - 18), col_idx))
+                elif char == "v": espinhos_teto_rects.append((pygame.Rect(obj_x + 14, y_pos, TILE_SIZE - 28, TILE_SIZE - 18), col_idx))
+                elif char == "1": blocos_rects.append((pygame.Rect(obj_x, y_pos, TILE_SIZE, TILE_SIZE), col_idx, y_pos))
+                elif char == "h": blocos_rects.append((pygame.Rect(obj_x, y_pos + TILE_SIZE // 2, TILE_SIZE, TILE_SIZE // 2), col_idx, y_pos))
+                elif char == "~": lavas_rects.append((pygame.Rect(obj_x, y_pos + TILE_SIZE - 14, TILE_SIZE, 14), col_idx))
                 elif char == "*": trampolins_rects.append(pygame.Rect(obj_x + 6, y_pos + TILE_SIZE - 12, TILE_SIZE - 12, 12))
                 elif char == "@": orbes_rects.append(pygame.Rect(obj_x + 8, y_pos + 8, TILE_SIZE - 16, TILE_SIZE - 16))
                 elif char in ("C", "N", "G"): portais.append((pygame.Rect(obj_x + 8, y_pos, TILE_SIZE - 16, TILE_SIZE), char))
-                elif char == "O" and tile_id not in moedas_pegas_ids: moedas.append((pygame.Rect(obj_x + 12, y_pos + 12, 36, 36), tile_id))
+                elif char == "O" and col_idx not in moedas_pegas_ids: moedas.append((pygame.Rect(obj_x + 12, y_pos + 12, 36, 36), col_idx))
 
         slime_hb = slime.get_hitbox()
 
-        if estado_jogo == "JOGANDO" and not vitoria:
+        if estado_jogo == "JOGANDO" and not vitoria and not morto_parado:
             for portal_rect, tipo in portais:
                 if slime_hb.colliderect(portal_rect):
                     if tipo == "C" and slime.modo != "CHICLETE": slime.mudar_modo("CHICLETE")
@@ -451,47 +486,45 @@ def main():
                     sound_mgr.tocar(sound_mgr.sfx_coin)
                     for _ in range(8): particles.append(Particle(coin_rect.centerx, coin_rect.centery, COLOR_COIN))
 
-            for spike in espinhos_chao_rects + espinhos_teto_rects + lavas_rects:
+            for spike, c_idx in espinhos_chao_rects:
                 if slime_hb.colliderect(spike):
-                    reset_game()
+                    reset_game(f"Espinho do Chão (Coluna {c_idx})", f"Spike Rect: {spike}")
 
-            # --- NOVO SISTEMA DE COLISÃO COM BLOCOS (SEGURO E SEM MORTES FANTASMAS) ---
+            for spike_top, c_idx in espinhos_teto_rects:
+                if slime_hb.colliderect(spike_top):
+                    reset_game(f"Espinho do Teto (Coluna {c_idx})", f"SpikeTop Rect: {spike_top}")
+
+            for lva, c_idx in lavas_rects:
+                if slime_hb.colliderect(lva):
+                    reset_game(f"Lava (Coluna {c_idx})", f"Lava Rect: {lva}")
+
             em_cima_de_bloco = False
-            for block in blocos_rects:
+            for block, c_idx, orig_y in blocos_rects:
                 if slime_hb.colliderect(block):
-                    if slime.gravity > 0:
-                        # Pousar no topo do bloco (caindo ou parado no topo)
-                        if slime.vel_y >= 0 and slime_hb.bottom <= block.top + 18:
-                            slime.y = float(block.top)
-                            slime.vel_y = 0.0
-                            slime.is_grounded = True
-                            em_cima_de_bloco = True
-                            slime.tentar_pular(sound_mgr)
-                            continue
-                        # Se estiver subindo (pulando) e encostando no bloco onde pisava, NÃO MORRE!
-                        elif slime.vel_y < 0 and slime_hb.bottom <= block.top + 22:
-                            continue
-
-                    elif slime.gravity < 0:
-                        # Pousar no teto (Modo Neve)
-                        if slime.vel_y <= 0 and slime_hb.top >= block.bottom - 18:
-                            slime.y = float(block.bottom + slime.current_height)
-                            slime.vel_y = 0.0
-                            slime.is_grounded = True
-                            em_cima_de_bloco = True
-                            slime.tentar_pular(sound_mgr)
-                            continue
-                        elif slime.vel_y > 0 and slime_hb.top >= block.bottom - 22:
+                    # 1. Pouso normal caindo/parado no topo
+                    if slime.gravity > 0 and slime.vel_y >= 0 and (slime.y - max(0.0, slime.vel_y)) <= block.top + 14:
+                        slime.y = float(block.top)
+                        slime.vel_y = 0.0
+                        slime.is_grounded = True
+                        em_cima_de_bloco = True
+                        slime.tentar_pular(sound_mgr)
+                    # 2. Pouso no teto (Modo Neve)
+                    elif slime.gravity < 0 and slime.vel_y <= 0 and (slime.y - min(0.0, slime.vel_y)) >= block.bottom - 14:
+                        slime.y = float(block.bottom)
+                        slime.vel_y = 0.0
+                        slime.is_grounded = True
+                        em_cima_de_bloco = True
+                        slime.tentar_pular(sound_mgr)
+                    else:
+                        # 3. CORREÇÃO CRÍTICA: Se o Slime estiver SUBINDO (vel_y < 0) e no TOPO do bloco, É UM PULO LEGÍTIMO!
+                        if slime.gravity > 0 and slime.vel_y < 0 and slime_hb.bottom <= block.top + 18:
+                            continue  # Ignora colisão falsa durante a subida do pulo!
+                        elif slime.gravity < 0 and slime.vel_y > 0 and slime_hb.top >= block.bottom - 18:
                             continue
 
-                    # Só morre se REALMENTE bater de frente na parede lateral do bloco!
-                    if slime_hb.right > block.left + 4 and slime_hb.left < block.left:
-                        if slime.gravity > 0 and slime_hb.bottom > block.top + 12:
-                            reset_game()
-                            break
-                        elif slime.gravity < 0 and slime_hb.top < block.bottom - 12:
-                            reset_game()
-                            break
+                        # Se for colisão lateral de fato (parede) -> Morte
+                        reset_game(f"Colisão Frontal com Bloco (Coluna {c_idx})", f"Block Rect: {block}")
+                        break
 
             if not em_cima_de_bloco and slime.y < FLOOR_Y:
                 if slime.modo != "CHICLETE": slime.is_grounded = False
@@ -506,10 +539,10 @@ def main():
         line_bright = int(120 + beat_pulse * 100)
         pygame.draw.line(screen, (0, line_bright, int(line_bright * 0.8)), (0, FLOOR_Y), (SCREEN_WIDTH, FLOOR_Y), 3)
 
-        for spike in espinhos_chao_rects: pygame.draw.polygon(screen, COLOR_SPIKE, [(spike.x - 4, spike.bottom), (spike.centerx, spike.top), (spike.right + 4, spike.bottom)])
-        for spike_top in espinhos_teto_rects: pygame.draw.polygon(screen, COLOR_SPIKE, [(spike_top.x - 4, spike_top.top), (spike_top.centerx, spike_top.bottom), (spike_top.right + 4, spike_top.top)])
-        for lva in lavas_rects: pygame.draw.rect(screen, COLOR_LAVA, lva)
-        for block in blocos_rects:
+        for spike, _ in espinhos_chao_rects: pygame.draw.polygon(screen, COLOR_SPIKE, [(spike.x - 4, spike.bottom), (spike.centerx, spike.top), (spike.right + 4, spike.bottom)])
+        for spike_top, _ in espinhos_teto_rects: pygame.draw.polygon(screen, COLOR_SPIKE, [(spike_top.x - 4, spike_top.top), (spike_top.centerx, spike_top.bottom), (spike_top.right + 4, spike_top.top)])
+        for lva, _ in lavas_rects: pygame.draw.rect(screen, COLOR_LAVA, lva)
+        for block, _, _ in blocos_rects:
             pygame.draw.rect(screen, COLOR_BLOCK, block)
             pygame.draw.rect(screen, (150, 140, 180), block, 2)
         for pad in trampolins_rects: pygame.draw.rect(screen, COLOR_PAD, pad, border_radius=3)
@@ -527,11 +560,20 @@ def main():
 
         if estado_jogo in ("INTRO_RUN", "JOGANDO", "PAUSADO"): slime.draw(screen)
 
+        if show_debug and estado_jogo != "MENU":
+            pygame.draw.rect(screen, (0, 255, 0), slime_hb, 2)
+            lbl_slime = debug_font.render(f"Slime (Y: {int(slime.y)})", True, (0, 255, 0))
+            screen.blit(lbl_slime, (slime_hb.x - 10, slime_hb.y - 20))
+
+            for spike, _ in espinhos_chao_rects: pygame.draw.rect(screen, (255, 0, 0), spike, 2)
+            for block, _, _ in blocos_rects: pygame.draw.rect(screen, (0, 120, 255), block, 2)
+            pygame.draw.line(screen, (255, 255, 0), (int(TARGET_X), 0), (int(TARGET_X), SCREEN_HEIGHT), 1)
+
         if estado_jogo in ("INTRO_WAIT", "INTRO_RUN", "JOGANDO", "PAUSADO") and attempt_text_x > -300:
             txt_attempt = attempt_font.render(f"TENTATIVA {tentativas}", True, (255, 255, 255))
             screen.blit(txt_attempt, (int(attempt_text_x - txt_attempt.get_width() // 2), 260))
 
-        if estado_jogo != "MENU":
+        if estado_jogo != "MENU" and not morto_parado:
             porcentagem = min(100, int((distancia_percorrida / distancia_total_musica) * 100))
             if vitoria: porcentagem = 100
             bar_width = 320
@@ -547,11 +589,25 @@ def main():
             txt_tentativas = font.render(f"Tentativa: {tentativas}", True, (255, 255, 255))
             txt_moedas = font.render(f"Moedas: {moedas_coletadas}/3", True, COLOR_COIN)
             screen.blit(txt_nome, (18, 18))
-            screen.blit(txt_tentativas, (18, 40))
-            screen.blit(txt_moedas, (18, 62))
-            if checkpoint is not None:
-                txt_chk = font.render("[Z] Checkpoint Ativo | [X] Remover", True, COLOR_CHECKPOINT)
-                screen.blit(txt_chk, (18, 84))
+            screen.blit(txt_tentativas, (18, 38))
+            screen.blit(txt_moedas, (18, 58))
+
+        if morto_parado:
+            banner_x = (SCREEN_WIDTH - 720) // 2
+            banner_y = 10
+            banner_w = 720
+            banner_h = 85
+
+            pygame.draw.rect(screen, (180, 25, 25), (banner_x, banner_y, banner_w, banner_h), border_radius=8)
+            pygame.draw.rect(screen, (255, 255, 255), (banner_x, banner_y, banner_w, banner_h), 2, border_radius=8)
+
+            txt_m1 = debug_font.render("--- DIAGNÓSTICO DE COLISÃO ---", True, (255, 255, 255))
+            txt_m2 = debug_font.render(f"MORTE: {causa_morte}", True, (255, 255, 0))
+            txt_m3 = font.render("Pressione [ESPAÇO] para tentar novamente", True, (230, 230, 230))
+
+            screen.blit(txt_m1, (SCREEN_WIDTH // 2 - txt_m1.get_width() // 2, banner_y + 10))
+            screen.blit(txt_m2, (SCREEN_WIDTH // 2 - txt_m2.get_width() // 2, banner_y + 34))
+            screen.blit(txt_m3, (SCREEN_WIDTH // 2 - txt_m3.get_width() // 2, banner_y + 58))
 
         if estado_jogo == "MENU":
             overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
@@ -560,9 +616,11 @@ def main():
             t1 = title_font.render("SLIME DASH", True, (50, 240, 100))
             t2 = font.render("Pressione ESPAÇO para Iniciar", True, (255, 255, 255))
             t3 = font.render("Controles: [ESPAÇO] Pular | [R] Reiniciar | [P / ESC] Pausar", True, (180, 180, 200))
-            screen.blit(t1, (SCREEN_WIDTH // 2 - t1.get_width() // 2, 240))
-            screen.blit(t2, (SCREEN_WIDTH // 2 - t2.get_width() // 2, 330))
-            screen.blit(t3, (SCREEN_WIDTH // 2 - t3.get_width() // 2, 390))
+            t4 = font.render("Aperte [G] para ativar/desativar o Modo Diagnóstico", True, (255, 255, 0))
+            screen.blit(t1, (SCREEN_WIDTH // 2 - t1.get_width() // 2, 220))
+            screen.blit(t2, (SCREEN_WIDTH // 2 - t2.get_width() // 2, 310))
+            screen.blit(t3, (SCREEN_WIDTH // 2 - t3.get_width() // 2, 370))
+            screen.blit(t4, (SCREEN_WIDTH // 2 - t4.get_width() // 2, 430))
 
         elif estado_jogo == "PAUSADO":
             overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)

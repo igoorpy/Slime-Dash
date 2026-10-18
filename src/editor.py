@@ -7,17 +7,16 @@ BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.append(BASE_DIR)
 
 try:
-    from src.levels import NIVEIS, DURACAO_MUSICA_SEGUNDOS
+    from src.levels import NIVEIS, DURACAO_MUSICA_SEGUNDOS, obter_configuracao_nivel
 except (ModuleNotFoundError, ImportError):
-    from levels import NIVEIS, DURACAO_MUSICA_SEGUNDOS
+    from levels import NIVEIS, DURACAO_MUSICA_SEGUNDOS, obter_configuracao_nivel
 
 SCREEN_WIDTH = 1280
 SCREEN_HEIGHT = 720
 FPS = 60
 
-# --- DIMINUIÇÃO DOS BLOCOS PARA 50px ---
 TILE_SIZE = 50
-NUM_ROWS = 10  # Mais linhas para o teto ficar mais alto
+NUM_ROWS = 10
 FLOOR_Y = 600
 CEILING_Y = FLOOR_Y - (NUM_ROWS * TILE_SIZE)
 
@@ -95,20 +94,16 @@ def obter_configuracao_nivel(id_nivel: int) -> dict:
     with open(caminho_levels, "w", encoding="utf-8") as f:
         f.write(conteudo)
 
-def obter_configuracao_nivel(id_nivel: int) -> dict:
-    return NIVEIS.get(id_nivel, NIVEIS[1])
-
 class EditorSlime:
     def __init__(self, x: float, y: float):
-        self.base_size = 40  # PERSONAGEM PROPORCIONAL AO BLOCO 50px
+        self.base_size = 40
         self.x = float(x)
         self.y = float(y)
         self.vel_y = 0.0
-        
-        # FÍSICA CALIBRADA (Pula ~172px de distância c/ precisão)
+
         self.gravity = 1.15
         self.jump_strength = -16.5
-        
+
         self.is_grounded = False
         self.jump_buffer = 0
         self.current_width = float(self.base_size)
@@ -125,10 +120,10 @@ class EditorSlime:
 
     def get_hitbox(self) -> pygame.Rect:
         return pygame.Rect(
-            int(self.rect.x + 6),
-            int(self.rect.y + 4),
-            int(self.rect.width - 12),
-            int(self.rect.height - 3)
+            int(self.x - 13),
+            int(self.y - 38),
+            26,
+            36
         )
 
     def solicitar_pulo(self):
@@ -176,7 +171,7 @@ def carregar_musica_robusta():
     pygame.mixer.init()
     caminho_abs = os.path.join(BASE_DIR, "assets", "sounds", "fase1.mp3")
     caminho_rel = "assets/sounds/fase1.mp3"
-    
+
     if os.path.exists(caminho_abs):
         pygame.mixer.music.load(caminho_abs)
     elif os.path.exists(caminho_rel):
@@ -187,13 +182,12 @@ def main():
     pygame.init()
     carregar_musica_robusta()
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-    pygame.display.set_caption("Slime Dash - Editor 2D (Pulo Calibrado & Música)")
+    pygame.display.set_caption("Slime Dash - Editor 2D (Hitbox & Colisão Corrigidas)")
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("Consolas", 14, bold=True)
     title_font = pygame.font.SysFont("Consolas", 18, bold=True)
 
     fase_config = obter_configuracao_nivel(1)
-    # Garante que o grid carregue 10 linhas, ajustando matrizes antigas de 8 linhas
     grid = []
     for r in range(NUM_ROWS):
         if r < len(fase_config["fase"]):
@@ -224,6 +218,7 @@ def main():
                         teste_camera_inicial = camera_x
                         teste_distancia = 0.0
                         test_slime = EditorSlime(x=TARGET_X, y=FLOOR_Y)
+                        test_slime.jump_buffer = 0
                         mensagem_status = "MODO TESTE ATIVO | [ESPAÇO] Pular | [P/ENTER] Sair do Teste"
                         try:
                             pygame.mixer.music.rewind()
@@ -240,7 +235,7 @@ def main():
                     if event.key == pygame.K_s:
                         fase_formatada = ["".join(linha) for linha in grid]
                         salvar_levels_py(fase_formatada)
-                        mensagem_status = "FASE SALVA! (Blocos redimensionados p/ 50px)"
+                        mensagem_status = "FASE SALVA COM SUCESSO!"
                         timer_status = 120
                     elif event.key == pygame.K_1: item_selecionado = "1"
                     elif event.key == pygame.K_2: item_selecionado = "h"
@@ -261,7 +256,7 @@ def main():
                         test_slime.solicitar_pulo()
 
         keys = pygame.key.get_pressed()
-        space_held = keys[pygame.K_SPACE]
+        space_held = keys[pygame.K_SPACE] if modo_teste else False
 
         if modo_teste:
             teste_distancia += VELOCIDADE_JOGO
@@ -283,7 +278,7 @@ def main():
                     if char in ("1", "h"):
                         b_rect = obj_rect if char == "1" else pygame.Rect(obj_x, y_pos + TILE_SIZE // 2, TILE_SIZE, TILE_SIZE // 2)
                         if slime_hb.colliderect(b_rect):
-                            if test_slime.vel_y >= 0 and test_slime.y <= b_rect.top + 20:
+                            if test_slime.vel_y >= 0 and (test_slime.y - max(0.0, test_slime.vel_y)) <= b_rect.top + 14:
                                 test_slime.y = float(b_rect.top)
                                 test_slime.vel_y = 0.0
                                 test_slime.is_grounded = True
@@ -291,17 +286,20 @@ def main():
                             else:
                                 teste_distancia = 0.0
                                 test_slime = EditorSlime(x=TARGET_X, y=FLOOR_Y)
+                                test_slime.jump_buffer = 0
+
                     elif char in ("^", "v"):
-                        # HITBOX DO ESPINHO REDUZIDA (Mais perdoável!)
-                        spk = pygame.Rect(obj_x + 12, y_pos + 16, TILE_SIZE - 24, TILE_SIZE - 16) if char == "^" else pygame.Rect(obj_x + 12, y_pos, TILE_SIZE - 24, TILE_SIZE - 16)
+                        spk = pygame.Rect(obj_x + 14, y_pos + 18, TILE_SIZE - 28, TILE_SIZE - 18) if char == "^" else pygame.Rect(obj_x + 14, y_pos, TILE_SIZE - 28, TILE_SIZE - 18)
                         if slime_hb.colliderect(spk):
                             teste_distancia = 0.0
                             test_slime = EditorSlime(x=TARGET_X, y=FLOOR_Y)
+                            test_slime.jump_buffer = 0
                     elif char == "~":
                         lva = pygame.Rect(obj_x, y_pos + TILE_SIZE - 14, TILE_SIZE, 14)
                         if slime_hb.colliderect(lva):
                             teste_distancia = 0.0
                             test_slime = EditorSlime(x=TARGET_X, y=FLOOR_Y)
+                            test_slime.jump_buffer = 0
 
         else:
             if keys[pygame.K_RIGHT] or keys[pygame.K_d]: camera_x += 18
