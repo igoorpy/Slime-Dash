@@ -18,11 +18,12 @@ FPS = 60
 TILE_SIZE = 50
 NUM_ROWS = 10
 FLOOR_Y = 600
-CEILING_Y = FLOOR_Y - (NUM_ROWS * TILE_SIZE)
+CEILING_Y = FLOOR_Y - (NUM_ROWS * TILE_SIZE)  # 100px
 
 TARGET_X = 240.0
 VELOCIDADE_JOGO = 6.0
 FPS_JOGO = 60
+
 COLUNAS_TOTAL = int((VELOCIDADE_JOGO * FPS_JOGO * DURACAO_MUSICA_SEGUNDOS) / TILE_SIZE)
 
 COLOR_BG = (20, 18, 30)
@@ -59,8 +60,12 @@ PALETES = [
 
 def salvar_levels_py(fase1_linhas):
     caminho_levels = os.path.join(BASE_DIR, "src", "levels.py")
+    if not os.path.exists(os.path.dirname(caminho_levels)):
+        caminho_levels = "levels.py"
+
     conteudo = f'''"""
 Módulo de Gerenciamento e Definição das Fases do Slime Dash.
+Gerado pelo Editor 2D.
 """
 VELOCIDADE_JOGO = 6.0
 FPS_JOGO = 60
@@ -123,7 +128,7 @@ class EditorSlime:
             int(self.x - 13),
             int(self.y - 38),
             26,
-            36
+            38
         )
 
     def solicitar_pulo(self):
@@ -168,36 +173,47 @@ class EditorSlime:
         surface.blit(s, (int(self.x - self.current_width / 2.0), int(self.y - self.current_height)))
 
 def carregar_musica_robusta():
-    pygame.mixer.init()
-    caminho_abs = os.path.join(BASE_DIR, "assets", "sounds", "fase1.mp3")
-    caminho_rel = "assets/sounds/fase1.mp3"
+    try:
+        pygame.mixer.init()
+        caminho_abs = os.path.join(BASE_DIR, "assets", "sounds", "fase1.mp3")
+        caminho_rel = "assets/sounds/fase1.mp3"
 
-    if os.path.exists(caminho_abs):
-        pygame.mixer.music.load(caminho_abs)
-    elif os.path.exists(caminho_rel):
-        pygame.mixer.music.load(caminho_rel)
-    pygame.mixer.music.set_volume(0.5)
+        if os.path.exists(caminho_abs):
+            pygame.mixer.music.load(caminho_abs)
+        elif os.path.exists(caminho_rel):
+            pygame.mixer.music.load(caminho_rel)
+        pygame.mixer.music.set_volume(0.5)
+    except Exception:
+        pass
 
 def main():
     pygame.init()
     carregar_musica_robusta()
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-    pygame.display.set_caption("Slime Dash - Editor 2D (Hitbox & Colisão Corrigidas)")
+    pygame.display.set_caption("Slime Dash - Editor 2D (Porcentagem no Topo)")
     clock = pygame.time.Clock()
     font = pygame.font.SysFont("Consolas", 14, bold=True)
-    title_font = pygame.font.SysFont("Consolas", 18, bold=True)
+    pct_font = pygame.font.SysFont("Consolas", 18, bold=True)
 
     fase_config = obter_configuracao_nivel(1)
     grid = []
-    for r in range(NUM_ROWS):
-        if r < len(fase_config["fase"]):
-            grid.append(list(fase_config["fase"][r].ljust(COLUNAS_TOTAL)))
-        else:
+
+    if isinstance(fase_config["fase"], (list, tuple)):
+        for r in range(NUM_ROWS):
+            if r < len(fase_config["fase"]):
+                linha_list = list(fase_config["fase"][r].ljust(COLUNAS_TOTAL))
+                grid.append(linha_list[:COLUNAS_TOTAL])
+            else:
+                grid.append(list(" " * COLUNAS_TOTAL))
+    else:
+        l0 = list(str(fase_config["fase"]).ljust(COLUNAS_TOTAL))
+        grid.append(l0[:COLUNAS_TOTAL])
+        for _ in range(1, NUM_ROWS):
             grid.append(list(" " * COLUNAS_TOTAL))
 
     camera_x = 0
     item_selecionado = "1"
-    mensagem_status = "MODO EDIÇÃO | [S] Salvar | [P/ENTER] Testar Pulo | Setas/AD Rolar"
+    mensagem_status = "[S] Salvar no Arquivo | [P/ENTER] Playtest | [A/D / Setas] Rolar Mapa"
     timer_status = 0
 
     modo_teste = False
@@ -211,6 +227,20 @@ def main():
             if event.type == pygame.QUIT:
                 running = False
 
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if not modo_teste:
+                    mx, my = event.pos
+                    if 10 <= my <= 40:
+                        x_ui = 10
+                        for char, nome, cor in PALETES:
+                            if x_ui <= mx <= x_ui + 85:
+                                item_selecionado = char
+                                break
+                            x_ui += 92
+
+                    if event.button == 4: camera_x = max(0, camera_x - TILE_SIZE * 3)
+                    elif event.button == 5: camera_x = min((COLUNAS_TOTAL * TILE_SIZE) - SCREEN_WIDTH, camera_x + TILE_SIZE * 3)
+
             elif event.type == pygame.KEYDOWN:
                 if event.key in (pygame.K_p, pygame.K_RETURN):
                     modo_teste = not modo_teste
@@ -219,7 +249,7 @@ def main():
                         teste_distancia = 0.0
                         test_slime = EditorSlime(x=TARGET_X, y=FLOOR_Y)
                         test_slime.jump_buffer = 0
-                        mensagem_status = "MODO TESTE ATIVO | [ESPAÇO] Pular | [P/ENTER] Sair do Teste"
+                        mensagem_status = "PLAYTEST ATIVO | [ESPAÇO] Pular | [P/ENTER] Sair"
                         try:
                             pygame.mixer.music.rewind()
                             pygame.mixer.music.play(-1)
@@ -235,7 +265,7 @@ def main():
                     if event.key == pygame.K_s:
                         fase_formatada = ["".join(linha) for linha in grid]
                         salvar_levels_py(fase_formatada)
-                        mensagem_status = "FASE SALVA COM SUCESSO!"
+                        mensagem_status = "FASE SALVA COM SUCESSO EM SRC/LEVELS.PY!"
                         timer_status = 120
                     elif event.key == pygame.K_1: item_selecionado = "1"
                     elif event.key == pygame.K_2: item_selecionado = "h"
@@ -304,12 +334,14 @@ def main():
         else:
             if keys[pygame.K_RIGHT] or keys[pygame.K_d]: camera_x += 18
             if keys[pygame.K_LEFT] or keys[pygame.K_a]: camera_x -= 18
-            camera_x = max(0, min(camera_x, (COLUNAS_TOTAL * TILE_SIZE) - SCREEN_WIDTH))
+            
+            max_cam = max(0, (COLUNAS_TOTAL * TILE_SIZE) - SCREEN_WIDTH)
+            camera_x = max(0, min(camera_x, max_cam))
 
             mouse_press = pygame.mouse.get_pressed()
             if mouse_press[0] or mouse_press[2]:
                 mx, my = pygame.mouse.get_pos()
-                if my >= max(CEILING_Y, 70) and my < FLOOR_Y:
+                if my >= CEILING_Y and my < FLOOR_Y:
                     col_idx = int((mx + camera_x) // TILE_SIZE)
                     row_idx = int((FLOOR_Y - 1 - my) // TILE_SIZE)
                     if 0 <= col_idx < COLUNAS_TOTAL and 0 <= row_idx < NUM_ROWS:
@@ -359,6 +391,19 @@ def main():
                     elif char == "E":
                         pygame.draw.rect(screen, (50, 255, 150), (x_pos + 8, y_pos, 4, TILE_SIZE))
 
+        # LINHAS DE INÍCIO E FIM
+        start_x_screen = int(0 - view_cam)
+        if -50 <= start_x_screen <= SCREEN_WIDTH + 50:
+            pygame.draw.rect(screen, (50, 240, 100), (start_x_screen, CEILING_Y, 6, FLOOR_Y - CEILING_Y))
+            txt_start = font.render("INÍCIO (0%)", True, (50, 240, 100))
+            screen.blit(txt_start, (start_x_screen + 10, CEILING_Y + 10))
+
+        end_x_screen = int((COLUNAS_TOTAL * TILE_SIZE) - view_cam)
+        if -50 <= end_x_screen <= SCREEN_WIDTH + 50:
+            pygame.draw.rect(screen, (230, 50, 50), (end_x_screen - 6, CEILING_Y, 6, FLOOR_Y - CEILING_Y))
+            txt_end = font.render(f"FIM DA MÚSICA (100% - {COLUNAS_TOTAL} cols)", True, (230, 50, 50))
+            screen.blit(txt_end, (end_x_screen - txt_end.get_width() - 10, CEILING_Y + 10))
+
         if modo_teste:
             test_slime.draw(screen, alpha=255)
         else:
@@ -366,7 +411,8 @@ def main():
             preview_slime = EditorSlime(x=TARGET_X, y=FLOOR_Y)
             preview_slime.draw(screen, alpha=160)
 
-        pygame.draw.rect(screen, (10, 8, 20), (0, 0, SCREEN_WIDTH, 70))
+        # TOPO: PALETA DE FERRAMENTAS
+        pygame.draw.rect(screen, (10, 8, 20), (0, 0, SCREEN_WIDTH, 50))
         x_ui = 10
         for char, nome, cor in PALETES:
             borda = 3 if item_selecionado == char else 1
@@ -376,14 +422,23 @@ def main():
             screen.blit(txt_p, (x_ui + 4, 18))
             x_ui += 92
 
+        # ---------------------------------------------------------------------
+        # BANNER DE PORCENTAGEM NO TOPO CENTRALIZADO (EM CIMA NO MEIO)
+        # ---------------------------------------------------------------------
+        col_atual = int((view_cam + TARGET_X) // TILE_SIZE)
+        tempo_segundo = int(col_atual / 7.2)
+        pct_nivel = min(100, max(0, int((col_atual / COLUNAS_TOTAL) * 100)))
+
+        txt_pct = pct_font.render(f" PROGRESSO: {pct_nivel}% ({tempo_segundo}s / 65s) ", True, (255, 255, 0))
+        bg_pct_rect = pygame.Rect(SCREEN_WIDTH // 2 - 160, 55, 320, 28)
+        pygame.draw.rect(screen, (10, 8, 25), bg_pct_rect, border_radius=6)
+        pygame.draw.rect(screen, (50, 240, 100), bg_pct_rect, 2, border_radius=6)
+        screen.blit(txt_pct, (SCREEN_WIDTH // 2 - txt_pct.get_width() // 2, 58))
+
         if timer_status > 0: timer_status -= 1
 
-        if modo_teste:
-            txt_mode = title_font.render("MODO TESTE DE PULO ATIVO (PLAYTEST) - [P/ENTER] Sair", True, (255, 215, 0))
-            screen.blit(txt_mode, (10, SCREEN_HEIGHT - 30))
-        else:
-            txt_st = font.render(mensagem_status, True, (50, 240, 100) if timer_status > 0 else COLOR_TEXT)
-            screen.blit(txt_st, (10, SCREEN_HEIGHT - 25))
+        txt_st = font.render(f"Coluna {col_atual}/{COLUNAS_TOTAL} | {mensagem_status}", True, (50, 240, 100) if timer_status > 0 else COLOR_TEXT)
+        screen.blit(txt_st, (10, SCREEN_HEIGHT - 25))
 
         pygame.display.flip()
         clock.tick(FPS)
