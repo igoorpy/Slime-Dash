@@ -356,6 +356,35 @@ def desenhar_parallax_caverna(surface: pygame.Surface, camera_x: float):
         pygame.draw.polygon(surface, (26, 24, 32), [(bx + 20, 0), (bx + 45, 240), (bx + 35, FLOOR_Y - 220), (bx + 65, FLOOR_Y), (bx + 5, FLOOR_Y), (bx + 10, 0)])
         pygame.draw.polygon(surface, (22, 20, 28), [(bx + 140, FLOOR_Y), (bx + 175, FLOOR_Y - 180), (bx + 210, FLOOR_Y)]) # Pedra afiada no chão
         pygame.draw.polygon(surface, (22, 20, 28), [(bx + 180, 0), (bx + 205, 160), (bx + 230, 0)])                   # Estalactite média no teto
+# --- FUNÇÕES DE DESENHO VISUAL (PIXEL ART) ---
+def desenhar_estalactite_obstaculo(surface, rect: pygame.Rect, facing_down: bool):
+    """Desenha os espinhos obstáculos com efeito 3D facetado"""
+    # Cores do espinho 3D
+    COLOR_ROCK_LIGHT = (90, 85, 90) # Lado iluminado (Esquerda)
+    COLOR_ROCK_DARK = (40, 42, 48)  # Lado com sombra (Direita)
+    
+    if facing_down: # Espinho do teto (aponta pra baixo)
+        left_poly = [(rect.x, rect.top), (rect.centerx, rect.bottom), (rect.centerx, rect.top)]
+        right_poly = [(rect.centerx, rect.top), (rect.centerx, rect.bottom), (rect.right, rect.top)]
+    else:           # Espinho do chão (aponta pra cima)
+        left_poly = [(rect.x, rect.bottom), (rect.centerx, rect.top), (rect.centerx, rect.bottom)]
+        right_poly = [(rect.centerx, rect.bottom), (rect.centerx, rect.top), (rect.right, rect.bottom)]
+    
+    pygame.draw.polygon(surface, COLOR_ROCK_LIGHT, left_poly)
+    pygame.draw.polygon(surface, COLOR_ROCK_DARK, right_poly)
+
+def draw_pixel_grass(surface, block_rect, world_x_offset):
+    """Desenha grama orgânica e florzinhas fixas no topo do bloco"""
+    COLOR_MOSS_LIGHT = (95, 185, 75)
+    COLOR_MOSS_DARK = (45, 115, 45)
+    
+    # Desenha os fios de grama orgânicos (tamanhos gerados por hash para não piscar na tela)
+    for i in range(int(block_rect.width)):
+        world_px = int(world_x_offset + i)
+        h = 2 + (hash(str(world_px)) % 4) # Fios de grama variando entre 2 e 5 pixels
+        
+        pygame.draw.line(surface, COLOR_MOSS_LIGHT, (block_rect.x + i, block_rect.top), (block_rect.x + i, block_rect.top + 1))
+        pygame.draw.line(surface, COLOR_MOSS_DARK, (block_rect.x + i, block_rect.top + 2), (block_rect.x + i, block_rect.top + h))
 
 def main():
     log_debug("=== INICIANDO SLIME DASH - CORREÇÃO DE SQUASH E PARALLAX CAVERNA SEM TOCHAS ===")
@@ -725,11 +754,11 @@ def main():
                     animando_vitoria = True
                     timer_anim_vitoria = 0
 
-            # --- RENDERIZAÇÃO ---
+           # --- RENDERIZAÇÃO ---
             final_bg = (int(current_bg_color[0]), int(current_bg_color[1]), int(current_bg_color[2]))
             screen.fill(final_bg)
 
-            # Parallax da Caverna (Estalactites, Estalagmites e Pedras Afiadas - SEM TOCHAS)
+            # Parallax da Caverna (Fundo limpo original)
             desenhar_parallax_caverna(screen, distancia_percorrida)
 
             if bg_flash_alpha > 0:
@@ -737,14 +766,9 @@ def main():
                 flash_surf.fill((255, 255, 255, int(bg_flash_alpha * 255)))
                 screen.blit(flash_surf, (0, 0))
 
+            # Chão e Teto limpos (sem a borda/serra verde do mapa)
             pygame.draw.rect(screen, COLOR_FLOOR, (0, FLOOR_Y, SCREEN_WIDTH, SCREEN_HEIGHT - FLOOR_Y))
             pygame.draw.rect(screen, COLOR_FLOOR, (0, 0, SCREEN_WIDTH, CEILING_Y))
-
-            # Grama/Musgo no Chão e no Teto
-            pygame.draw.rect(screen, COLOR_MOSS, (0, FLOOR_Y, SCREEN_WIDTH, 4))
-            for gx in range(0, SCREEN_WIDTH, 12):
-                pygame.draw.polygon(screen, COLOR_MOSS, [(gx, FLOOR_Y), (gx + 4, FLOOR_Y - 4), (gx + 8, FLOOR_Y)])
-            pygame.draw.rect(screen, COLOR_MOSS, (0, CEILING_Y - 4, SCREEN_WIDTH, 4))
 
             # Desenha as Manchas de Gosma dos Pousos
             offset_camera = TARGET_X - distancia_percorrida
@@ -759,21 +783,36 @@ def main():
                 if estado_jogo == "JOGANDO" and random.random() < 0.08:
                     particles.append(Particle(random.uniform(lva.x, lva.right), lva.y+5, (255, 120, 0), vel_x=-scroll_speed, vel_y=random.uniform(-3, -1), gravity=0.1, size=random.randint(2,4)))
 
-            for spike, _ in espinhos_chao_rects: pygame.draw.polygon(screen, COLOR_SPIKE, [(spike.x - 4, spike.bottom), (spike.centerx, spike.top), (spike.right + 4, spike.bottom)])
-            for spike_top, _ in espinhos_teto_rects: pygame.draw.polygon(screen, COLOR_SPIKE, [(spike_top.x - 4, spike_top.top), (spike_top.centerx, spike_top.bottom), (spike_top.right + 4, spike_top.top)])
-            
-            # BLOCOS DE PEDRA COM GRAMA/MUSGO NO TOPO
+            # ESPINHOS DOS OBSTÁCULOS (3D Facetado com Luz e Sombra)
+            for spike_rect, _ in espinhos_chao_rects: 
+                desenhar_estalactite_obstaculo(screen, spike_rect, facing_down=False)
+            for spike_top_rect, _ in espinhos_teto_rects: 
+                desenhar_estalactite_obstaculo(screen, spike_top_rect, facing_down=True)
+
+            # BLOCOS DE PEDRA COM GRAMA ORGÂNICA E FLORES NO TOPO
             current_block_border = COLOR_BORDER_GOSMA
             if slime.modo == "CHICLETE": current_block_border = COLOR_BORDER_CHICLETE
             elif slime.modo == "NEVE": current_block_border = COLOR_BORDER_NEVE
 
-            for block, _, _ in blocos_rects:
+            for block, col_idx, orig_y in blocos_rects:
                 pygame.draw.rect(screen, COLOR_BLOCK, block)
                 pygame.draw.rect(screen, current_block_border, block, 2) 
                 pygame.draw.rect(screen, (30, 30, 35), (block.x + 10, block.y + 10, TILE_SIZE - 20, TILE_SIZE - 20))
-                # Cobertura de musgo/grama no topo de cada bloco
-                pygame.draw.rect(screen, COLOR_MOSS, (block.x, block.y, TILE_SIZE, 3))
-                pygame.draw.line(screen, (20, 20, 25), (block.x + 15, block.y + 15), (block.x + 25, block.y + 30), 2)
+                
+                # Grama Pixel Art Orgânica no topo do bloco
+                draw_pixel_grass(screen, block, block.x + distancia_percorrida)
+                
+                # Florzinhas fixas no topo dos blocos (35% de chance)
+                random.seed(orig_y + col_idx)
+                if random.random() < 0.35:
+                    cor_flor = random.choice([(255, 200, 0), (200, 50, 255), (255, 100, 100)])
+                    fx = block.x + random.randint(5, 35)
+                    fy = block.y - 2
+                    pygame.draw.rect(screen, cor_flor, (fx, fy, 2, 2))
+                    pygame.draw.rect(screen, cor_flor, (fx-2, fy+2, 2, 2))
+                    pygame.draw.rect(screen, cor_flor, (fx+2, fy+2, 2, 2))
+                    pygame.draw.rect(screen, (255, 255, 255), (fx, fy+2, 2, 2)) # Miolo
+                random.seed()
 
             # Trampolins com Glow
             for pad in trampolins_rects: 
@@ -899,3 +938,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
