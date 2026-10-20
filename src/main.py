@@ -116,29 +116,60 @@ class SoundManager:
             except Exception: pass
 
 class Particle:
-    def __init__(self, x: float, y: float, color: tuple, vel_x: float = None, vel_y: float = None, gravity: float = 0.0, size: int = None, lifespan: int = 255):
+    def __init__(self, x: float, y: float, color: tuple, vel_x: float = None, vel_y: float = None, gravity: float = 0.0, size: int = None, lifespan: int = 255, p_type: str = "generic", target_x: float = 0.0, target_y: float = 0.0):
         self.x = float(x)
         self.y = float(y)
         self.color = color
-        self.radius = float(size if size is not None else random.randint(4, 7))
-        self.vel_x = vel_x if vel_x is not None else random.uniform(-2.0, -0.5)
-        self.vel_y = vel_y if vel_y is not None else random.uniform(-1.5, 1.5)
+        self.radius = float(size if size is not None else random.randint(3, 6))
+        self.vel_x = vel_x if vel_x is not None else random.uniform(-2.0, 2.0)
+        self.vel_y = vel_y if vel_y is not None else random.uniform(-2.0, 2.0)
         self.gravity = gravity
         self.lifespan = lifespan
+        self.p_type = p_type
+        self.target_x = target_x
+        self.target_y = target_y
 
-    def update(self):
-        self.vel_y += self.gravity
-        self.x += self.vel_x
-        self.y += self.vel_y
-        self.radius = max(0.0, self.radius - (0.12 if self.lifespan == 255 else 0.05))
-        self.lifespan -= 2
+    def update(self, floor_y: int, new_particles: list):
+        if self.p_type == "vortex_pull":
+            # Movimento suave de sucção para o centro
+            dx = self.target_x - self.x
+            dy = self.target_y - self.y
+            dist = math.hypot(dx, dy)
+            if dist < 10:
+                self.lifespan = 0 # Some ao tocar no centro
+            else:
+                speed = 5.0 # Velocidade da sucção
+                self.x += (dx / dist) * speed
+                self.y += (dy / dist) * speed
+                self.lifespan -= 3
+        elif self.p_type == "slime_drip":
+            self.vel_y += self.gravity
+            self.y += self.vel_y
+            self.lifespan -= 4 # Pingo some mais rápido
+        elif self.p_type == "pink_bubble":
+            self.x += math.sin(self.y * 0.05) * 0.5 # Faz a bolha subir em zigue-zague suave
+            self.y += self.vel_y
+            self.lifespan -= 2
+        else: # Partículas genéricas (poeira, lava)
+            self.vel_y += self.gravity
+            self.x += self.vel_x
+            self.y += self.vel_y
+            self.radius = max(0.0, self.radius - 0.1)
+            self.lifespan -= 2
 
     def draw(self, surface: pygame.Surface):
         if self.radius > 0 and self.lifespan > 0:
-            alpha_color = (*self.color[:3], max(0, min(255, self.lifespan)))
-            p_surf = pygame.Surface((int(self.radius*2), int(self.radius*2)), pygame.SRCALPHA)
-            pygame.draw.circle(p_surf, alpha_color, (int(self.radius), int(self.radius)), int(self.radius))
-            surface.blit(p_surf, (int(self.x - self.radius), int(self.y - self.radius)))
+            alpha = max(0, min(255, self.lifespan))
+            if self.p_type in ("pink_bubble", "vortex_pull"):
+                # Desenha como bolhas translúcidas vazadas
+                p_surf = pygame.Surface((int(self.radius*2+2), int(self.radius*2+2)), pygame.SRCALPHA)
+                pygame.draw.circle(p_surf, (*self.color[:3], alpha), (int(self.radius+1), int(self.radius+1)), int(self.radius), 1)
+                surface.blit(p_surf, (int(self.x - self.radius), int(self.y - self.radius)))
+            else:
+                # Partículas sólidas normais
+                p_surf = pygame.Surface((int(self.radius*2), int(self.radius*2)), pygame.SRCALPHA)
+                pygame.draw.circle(p_surf, (*self.color[:3], alpha), (int(self.radius), int(self.radius)), int(self.radius))
+                surface.blit(p_surf, (int(self.x - self.radius), int(self.y - self.radius)))
 
 class Decal:
     def __init__(self, x_mundo: float, y: float, width: float, color: tuple, invertido: bool = False):
@@ -356,6 +387,7 @@ def desenhar_parallax_caverna(surface: pygame.Surface, camera_x: float):
         pygame.draw.polygon(surface, (26, 24, 32), [(bx + 20, 0), (bx + 45, 240), (bx + 35, FLOOR_Y - 220), (bx + 65, FLOOR_Y), (bx + 5, FLOOR_Y), (bx + 10, 0)])
         pygame.draw.polygon(surface, (22, 20, 28), [(bx + 140, FLOOR_Y), (bx + 175, FLOOR_Y - 180), (bx + 210, FLOOR_Y)]) # Pedra afiada no chão
         pygame.draw.polygon(surface, (22, 20, 28), [(bx + 180, 0), (bx + 205, 160), (bx + 230, 0)])                   # Estalactite média no teto
+
 # --- FUNÇÕES DE DESENHO VISUAL (PIXEL ART) ---
 def desenhar_estalactite_obstaculo(surface, rect: pygame.Rect, facing_down: bool):
     """Desenha os espinhos obstáculos com efeito 3D facetado"""
@@ -386,6 +418,62 @@ def draw_pixel_grass(surface, block_rect, world_x_offset):
         pygame.draw.line(surface, COLOR_MOSS_LIGHT, (block_rect.x + i, block_rect.top), (block_rect.x + i, block_rect.top + 1))
         pygame.draw.line(surface, COLOR_MOSS_DARK, (block_rect.x + i, block_rect.top + 2), (block_rect.x + i, block_rect.top + h))
 
+def desenhar_portal(surface, portal_rect: pygame.Rect, tipo: str, frame_count: int, beat_pulse: float, particles: list):
+    x, y, w, h = portal_rect.x, portal_rect.y, portal_rect.width, portal_rect.height
+    
+    if tipo == "G": # GOSMA: Pilares escuros com véu verde
+        # Pilares de pedra (Esquerda e Direita)
+        pygame.draw.rect(surface, (40, 42, 48), (x, y, 8, h))
+        pygame.draw.rect(surface, (40, 42, 48), (x + w - 8, y, 8, h))
+        
+        # Véu Verde oscilando no centro
+        alpha = int(100 + 40 * math.sin(frame_count * 0.08))
+        curtain = pygame.Surface((w - 16, h), pygame.SRCALPHA)
+        curtain.fill((120, 220, 90, alpha))
+        surface.blit(curtain, (x + 8, y))
+        
+        # Pingos de Gosma caindo
+        if random.random() < 0.15:
+            particles.append(Particle(x + random.uniform(10, w - 10), y + 5, COLOR_SLIME_GOSMA, vel_x=0, vel_y=random.uniform(0.5, 1.5), gravity=0.15, size=random.randint(2, 3), lifespan=200, p_type="slime_drip"))
+
+    elif tipo == "C": # CHICLETE: Anel flutuante rosa pulsante
+        # Calcula o pulso do anel
+        scale = 1.0 + (beat_pulse * 0.15)
+        ring_w, ring_h = int(w * scale), int(h * scale)
+        rx, ry = portal_rect.centerx - ring_w // 2, portal_rect.centery - ring_h // 2
+        
+        # Desenha o anel
+        pygame.draw.ellipse(surface, (255, 120, 180), (rx, ry, ring_w, ring_h), 4)
+        
+        # Bolhas subindo
+        if random.random() < 0.2:
+            particles.append(Particle(portal_rect.centerx + random.uniform(-15, 15), ry + ring_h, COLOR_SLIME_CHICLETE, vel_x=0, vel_y=random.uniform(-1.5, -0.5), gravity=0, size=random.randint(3, 6), lifespan=150, p_type="pink_bubble"))
+
+    elif tipo == "N": # NEVE: Simples obeliscos cianos
+        pygame.draw.rect(surface, (100, 180, 240), (x, y, 4, h))
+        pygame.draw.rect(surface, (100, 180, 240), (x + w - 4, y, 4, h))
+        ice = pygame.Surface((w - 8, h), pygame.SRCALPHA)
+        ice.fill((130, 210, 255, 90))
+        surface.blit(ice, (x + 4, y))
+
+def desenhar_vortice_final(surface, cx: int, cy: int, frame_count: int, beat_pulse: float):
+    # Fundo do Vórtice (Preto Absoluto)
+    pygame.draw.circle(surface, (0, 0, 0), (cx, cy), 35)
+    
+    # Bordas Pulsantes Ciano e Magenta
+    pulse_mod = int(beat_pulse * 8)
+    pygame.draw.circle(surface, (255, 0, 255), (cx, cy), 35 + pulse_mod, 3)
+    pygame.draw.circle(surface, (0, 255, 255), (cx, cy), 42 + pulse_mod, 2)
+    
+    # Anéis tracejados rodando suavemente
+    ang = frame_count * 0.05
+    for r, speed_mod, color in [(25, 1, (200, 100, 255)), (15, -1.5, (100, 230, 255))]:
+        for i in range(4): # 4 traços por anel
+            a = ang * speed_mod + (i * math.pi / 2)
+            px = cx + r * math.cos(a)
+            py = cy + r * math.sin(a)
+            pygame.draw.circle(surface, color, (int(px), int(py)), 3)
+            
 def main():
     log_debug("=== INICIANDO SLIME DASH - CORREÇÃO DE SQUASH E PARALLAX CAVERNA SEM TOCHAS ===")
     pygame.init()
@@ -644,9 +732,11 @@ def main():
                             animando_vitoria = False
                             vitoria = True
 
+            new_particles = []
             for p in particles[:]:
-                p.update()
+                p.update(FLOOR_Y, new_particles)
                 if p.radius <= 0 or p.lifespan <= 0: particles.remove(p)
+            particles.extend(new_particles)
 
             espinhos_chao_rects, espinhos_teto_rects, lavas_rects = [], [], []
             blocos_rects, trampolins_rects, orbes_rects = [], [], []
@@ -754,7 +844,7 @@ def main():
                     animando_vitoria = True
                     timer_anim_vitoria = 0
 
-           # --- RENDERIZAÇÃO ---
+            # --- RENDERIZAÇÃO ---
             final_bg = (int(current_bg_color[0]), int(current_bg_color[1]), int(current_bg_color[2]))
             screen.fill(final_bg)
 
@@ -827,19 +917,30 @@ def main():
             for orb in orbes_rects:
                 pygame.draw.circle(screen, COLOR_RING, orb.center, 14, 3)
                 pygame.draw.circle(screen, (255, 255, 255), orb.center, 6)
+
+            # --- RENDERIZAÇÃO DOS PORTAIS DE MUDANÇA DE MODO ---
             for portal_rect, tipo in portais:
-                p_color = COLOR_SLIME_CHICLETE if tipo == "C" else (COLOR_SLIME_NEVE if tipo == "N" else COLOR_SLIME_GOSMA)
-                pygame.draw.rect(screen, p_color, portal_rect, 4)
+                desenhar_portal(screen, portal_rect, tipo, global_frame_count, beat_pulse, particles)
+
             for coin_rect, _ in moedas:
                 pygame.draw.circle(screen, COLOR_COIN, coin_rect.center, 14)
                 pygame.draw.circle(screen, (255, 255, 200), coin_rect.center, 6)
 
+            # --- RENDERIZAÇÃO DO VÓRTICE FINAL ---
             fim_x_tela = fim_fase_x_relativo + TARGET_X - distancia_percorrida
-            if -100 < fim_x_tela < SCREEN_WIDTH + 100:
-                center_vortex = (int(fim_x_tela), FLOOR_Y - 100)
-                pygame.draw.circle(screen, (180, 50, 255), center_vortex, 45, 4)
-                pygame.draw.circle(screen, (50, 240, 255), center_vortex, 30, 3)
-                pygame.draw.circle(screen, (10, 5, 20), center_vortex, 20)
+            if -150 < fim_x_tela < SCREEN_WIDTH + 150:
+                vortex_center_x = fim_x_tela
+                vortex_center_y = FLOOR_Y - 100
+                
+                # Partículas de Sucção (Pull Effect)
+                if estado_jogo == "JOGANDO" and random.random() < 0.4:
+                    ang = random.uniform(0, 2 * math.pi)
+                    dist_spawn = random.uniform(70, 110)
+                    sp_x = vortex_center_x + dist_spawn * math.cos(ang)
+                    sp_y = vortex_center_y + dist_spawn * math.sin(ang)
+                    particles.append(Particle(sp_x, sp_y, (240, 240, 255), target_x=vortex_center_x, target_y=vortex_center_y, size=random.randint(2, 4), lifespan=120, p_type="vortex_pull"))
+                    
+                desenhar_vortice_final(screen, vortex_center_x, vortex_center_y, global_frame_count, beat_pulse)
 
             for p in particles: p.draw(screen)
 
@@ -938,4 +1039,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
