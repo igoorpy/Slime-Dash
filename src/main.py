@@ -25,22 +25,28 @@ CEILING_Y = FLOOR_Y - (NUM_ROWS * TILE_SIZE)
 TARGET_X = 240.0
 SLIME_START_X = -80.0
 
-# PALETA TEMA CAVERNA (Inspirado em Minecraft Dripstone/Lush e Geometry Dash)
-COLOR_BG_CAVERNA = (20, 18, 25)
-COLOR_BG_CHICLETE = (28, 10, 22)
-COLOR_BG_NEVE = (10, 18, 30)
+# PALETA TEMA CAVERNA
+COLOR_BG_CAVERNA = (12, 10, 16)
+COLOR_BG_CHICLETE = (25, 8, 18)
+COLOR_BG_NEVE = (8, 15, 25)
 
-COLOR_FLOOR = (35, 35, 40)
+COLOR_FLOOR = (28, 28, 32)
+COLOR_MOSS = (65, 135, 55)             # Musgo/Grama verde sobre as pedras e chão
 COLOR_SLIME_GOSMA = (120, 220, 90)     
 COLOR_SLIME_CHICLETE = (255, 120, 180)
 COLOR_SLIME_NEVE = (130, 210, 255)
 
 # ESTALAGMITES, BLOCOS E LAVA
-COLOR_SPIKE = (90, 80, 85) # Espinhos com cor de pedra/estalagmite
-COLOR_BLOCK = (40, 40, 45) # Pedra escura (Minecraft cobble style)
-COLOR_BLOCK_BORDER = (80, 180, 90) # Borda meio musgo (Lush cave / GD)
-COLOR_LAVA_BASE = (210, 40, 0)  # Vermelho Lava Minecraft
-COLOR_LAVA_DETAIL = (255, 120, 0) # Laranja magma
+COLOR_SPIKE = (90, 85, 90)
+COLOR_BLOCK = (40, 42, 48) 
+
+# BORDAS DINÂMICAS DOS BLOCOS POR MODO
+COLOR_BORDER_GOSMA = (85, 160, 85)     
+COLOR_BORDER_CHICLETE = (255, 105, 180) 
+COLOR_BORDER_NEVE = (135, 206, 250)    
+
+COLOR_LAVA_BASE = (220, 50, 10)  
+COLOR_LAVA_DETAIL = (255, 140, 0) 
 
 COLOR_PAD = (255, 230, 0)
 COLOR_RING = (255, 200, 0)
@@ -54,7 +60,9 @@ class SoundManager:
         self.sounds_enabled = True
         try:
             pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=512)
-        except Exception:
+            log_debug("Mixer de Áudio inicializado com sucesso.")
+        except Exception as e:
+            log_debug(f"AVISO: Falha ao inicializar áudio: {e}")
             self.sounds_enabled = False
 
         self.sfx_jump = self._gerar_som_sintetico(520, 60)
@@ -108,7 +116,7 @@ class SoundManager:
             except Exception: pass
 
 class Particle:
-    def __init__(self, x: float, y: float, color: tuple, vel_x: float = None, vel_y: float = None, gravity: float = 0.0, size: int = None):
+    def __init__(self, x: float, y: float, color: tuple, vel_x: float = None, vel_y: float = None, gravity: float = 0.0, size: int = None, lifespan: int = 255):
         self.x = float(x)
         self.y = float(y)
         self.color = color
@@ -116,16 +124,45 @@ class Particle:
         self.vel_x = vel_x if vel_x is not None else random.uniform(-2.0, -0.5)
         self.vel_y = vel_y if vel_y is not None else random.uniform(-1.5, 1.5)
         self.gravity = gravity
+        self.lifespan = lifespan
 
     def update(self):
         self.vel_y += self.gravity
         self.x += self.vel_x
         self.y += self.vel_y
-        self.radius = max(0.0, self.radius - 0.12)
+        self.radius = max(0.0, self.radius - (0.12 if self.lifespan == 255 else 0.05))
+        self.lifespan -= 2
 
     def draw(self, surface: pygame.Surface):
-        if self.radius > 0:
-            pygame.draw.circle(surface, self.color, (int(self.x), int(self.y)), int(self.radius))
+        if self.radius > 0 and self.lifespan > 0:
+            alpha_color = (*self.color[:3], max(0, min(255, self.lifespan)))
+            p_surf = pygame.Surface((int(self.radius*2), int(self.radius*2)), pygame.SRCALPHA)
+            pygame.draw.circle(p_surf, alpha_color, (int(self.radius), int(self.radius)), int(self.radius))
+            surface.blit(p_surf, (int(self.x - self.radius), int(self.y - self.radius)))
+
+class Decal:
+    def __init__(self, x_mundo: float, y: float, width: float, color: tuple, invertido: bool = False):
+        self.x_mundo = x_mundo
+        self.y = y
+        self.width = width
+        self.color = color
+        self.invertido = invertido
+        
+        self.pontos = []
+        num_pontos = max(3, int(width // 10))
+        for i in range(num_pontos):
+            offset_x = (i * 10) - (width / 2) + random.uniform(-2, 2)
+            gota_h = random.randint(3, 7)
+            if invertido:
+                self.pontos.append((offset_x, gota_h))
+            else:
+                self.pontos.append((offset_x, -gota_h))
+
+    def draw(self, surface: pygame.Surface, camera_offset_x: float):
+        tela_x = self.x_mundo + camera_offset_x
+        if -50 < tela_x < SCREEN_WIDTH + 50:
+            for px, py in self.pontos:
+                pygame.draw.circle(surface, self.color, (int(tela_x + px), int(self.y)), abs(py))
 
 class Slime(pygame.sprite.Sprite):
     def __init__(self, x: float, y: float):
@@ -154,7 +191,12 @@ class Slime(pygame.sprite.Sprite):
     def get_hitbox(self) -> pygame.Rect:
         return pygame.Rect(int(self.x - 13), int(self.y - 38), 26, 38)
 
+    def get_ground_check_hitbox(self) -> pygame.Rect:
+        # Hitbox estendida em 1px para baixo para manter contato contínuo ao deslizar nos blocos
+        return pygame.Rect(int(self.x - 13), int(self.y - 38), 26, 39)
+
     def mudar_modo(self, novo_modo: str):
+        log_debug(f"🔄 MUDANÇA DE MODO: {self.modo} -> {novo_modo} | PosY: {self.y:.1f}")
         self.modo = novo_modo
         self.imunidade_portal = 15
         if novo_modo == "GOSMA":
@@ -181,16 +223,35 @@ class Slime(pygame.sprite.Sprite):
                 self.vel_y = self.jump_strength
                 self.is_grounded = False
                 self.jump_buffer = 0
-                self.current_width, self.current_height = 28.0, 50.0
+                self.current_width, self.current_height = 20.0, 65.0
                 poulou = True
 
             if poulou:
+                log_debug(f"🦘 PULO EXECUTADO | Modo: {self.modo} | VelY: {self.vel_y:.2f} | PosY: {self.y:.1f}")
                 if trigger_flash_func is not None: trigger_flash_func(0.08)
                 if sound_mgr is not None: sound_mgr.tocar(sound_mgr.sfx_jump)
 
-    def update(self, floor_y: int, ceiling_y: int, particles: list, space_held: bool = False, sound_mgr: SoundManager = None, trigger_flash_func=None):
+    def aplicar_impacto_chao(self, origem_nome="Chão/Bloco", dist_total: float = 0, decals_list: list = None):
+        # SÓ APLICA O SQUASH E O RASTRO SE ESTAVA NO AR (MOMENTO EXATO DO POUSO)
+        if not self.is_grounded:
+            self.current_width, self.current_height = 68.0, 20.0
+            log_debug(f"💥 POUSO E ESMAGAMENTO (SQUASH) em [{origem_nome}] | Slime Y: {self.y:.1f} | Dimensões: 68x20px")
+            
+            if decals_list is not None:
+                mundo_x = self.x - (TARGET_X - dist_total)
+                invertido = self.gravity < 0
+                decals_list.append(Decal(mundo_x, self.y, self.current_width, self.color, invertido))
+
+        self.is_grounded = True
+        self.vel_y = 0.0
+
+    def update(self, floor_y: int, ceiling_y: int, particles: list, space_held: bool, sound_mgr: SoundManager, trigger_flash_func, dist_total: float, decals_list: list):
         if self.jump_buffer > 0: self.jump_buffer -= 1
         if self.imunidade_portal > 0: self.imunidade_portal -= 1
+
+        if not self.is_grounded and abs(self.vel_y) > 8.0 and self.modo != "CHICLETE":
+            self.current_width += (26.0 - self.current_width) * 0.2
+            self.current_height += (55.0 - self.current_height) * 0.2
 
         if self.modo == "CHICLETE":
             if space_held: self.vel_y = max(-3.2, self.vel_y - 0.25)
@@ -210,17 +271,13 @@ class Slime(pygame.sprite.Sprite):
             if self.gravity > 0 and not self.is_grounded:
                 if self.y >= floor_y:
                     self.y = float(floor_y)
-                    self.vel_y = 0.0
-                    self.is_grounded = True
-                    self.current_width, self.current_height = 50.0, 28.0
+                    self.aplicar_impacto_chao("Chão Principal", dist_total, decals_list)
                     for _ in range(5): particles.append(Particle(self.x, floor_y - 4, self.color))
                     self.tentar_pular(sound_mgr, trigger_flash_func)
             elif self.gravity < 0 and not self.is_grounded:
                 if self.y <= ceiling_y:
                     self.y = float(ceiling_y)
-                    self.vel_y = 0.0
-                    self.is_grounded = True
-                    self.current_width, self.current_height = 50.0, 28.0
+                    self.aplicar_impacto_chao("Teto Principal", dist_total, decals_list)
                     for _ in range(5): particles.append(Particle(self.x, ceiling_y + 4, self.color))
                     self.tentar_pular(sound_mgr, trigger_flash_func)
 
@@ -228,8 +285,9 @@ class Slime(pygame.sprite.Sprite):
                 py_pos = self.y if self.gravity > 0 else self.y - 38
                 particles.append(Particle(self.x - 12, py_pos, (140, 140, 160), vel_x=-2.5, vel_y=random.uniform(-0.8, 0.2), size=3))
 
-        self.current_width += (self.base_size - self.current_width) * 0.2
-        self.current_height += (self.base_size - self.current_height) * 0.2
+        # RECUPERAR A FORMA REDONDA NATURAL (40x40px)
+        self.current_width += (self.base_size - self.current_width) * 0.15
+        self.current_height += (self.base_size - self.current_height) * 0.15
         self.update_rect()
 
     def draw(self, surface: pygame.Surface, scale: float = 1.0, angle: float = 0.0):
@@ -241,36 +299,29 @@ class Slime(pygame.sprite.Sprite):
             dark_outline = (30, 80, 20)
             highlight_color = (200, 255, 170)
 
-            # Corpo
             pygame.draw.ellipse(slime_surf, dark_outline, (0, 0, w, h))
             pygame.draw.ellipse(slime_surf, self.color, (2, 2, w - 4, h - 4))
             pygame.draw.ellipse(slime_surf, highlight_color, (w // 4, 3, w // 2, h // 3))
 
             eye_y = (h // 2) - int(2 * scale)
-
-            # --- ANIMAÇÃO DE EXPRESSÃO (KAWAII / JUMP / IDLE) ---
             jumping = (self.vel_y < -2.0 if self.gravity > 0 else self.vel_y > 2.0) and not self.is_grounded
 
             if jumping or self.modo == "CHICLETE":
-                # OLHOS ARREGALADOS FELIZES (Kawaii)
                 eye_r = int(4 * scale)
                 pygame.draw.circle(slime_surf, (255, 255, 255), (w // 2 - int(8 * scale), eye_y + 2), eye_r)
                 pygame.draw.circle(slime_surf, (255, 255, 255), (w // 2 + int(6 * scale), eye_y + 2), eye_r)
                 pygame.draw.circle(slime_surf, (20, 30, 20), (w // 2 - int(8 * scale), eye_y + 2), eye_r - 1)
                 pygame.draw.circle(slime_surf, (20, 30, 20), (w // 2 + int(6 * scale), eye_y + 2), eye_r - 1)
                 
-                # BOCA ABERTA FELIZ (:D)
                 mouth_rect = pygame.Rect(w // 2 - int(4 * scale), eye_y + int(4 * scale), int(8 * scale), int(6 * scale))
                 pygame.draw.ellipse(slime_surf, (20, 30, 20), mouth_rect)
                 pygame.draw.ellipse(slime_surf, (200, 50, 50), (mouth_rect.x + 1, mouth_rect.y + 2, mouth_rect.width - 2, mouth_rect.height - 2))
             else:
-                # OLHOS NORMAIS (Idle)
                 eye_w = max(2, int(2 * scale))
                 eye_h = max(4, int(6 * scale))
                 pygame.draw.rect(slime_surf, (20, 30, 20), (w // 2 - int(8 * scale), eye_y, eye_w, eye_h))
                 pygame.draw.rect(slime_surf, (20, 30, 20), (w // 2 + int(6 * scale), eye_y, eye_w, eye_h))
 
-                # BOQUINHA EM 'w'
                 mouth_y = eye_y + eye_h + int(1 * scale)
                 mw = int(2 * scale)
                 pygame.draw.rect(slime_surf, (20, 30, 20), (w // 2 - int(6 * scale), mouth_y, mw, mw))
@@ -279,31 +330,35 @@ class Slime(pygame.sprite.Sprite):
                 pygame.draw.rect(slime_surf, (20, 30, 20), (w // 2 + int(3 * scale), mouth_y + mw, mw, mw))
                 pygame.draw.rect(slime_surf, (20, 30, 20), (w // 2 + int(5 * scale), mouth_y, mw, mw))
 
-            if angle != 0:
-                slime_surf = pygame.transform.rotate(slime_surf, angle)
-
-            dest_rect = slime_surf.get_rect(center=self.rect.center)
-            surface.blit(slime_surf, dest_rect)
+            if angle != 0: slime_surf = pygame.transform.rotate(slime_surf, angle)
+            surface.blit(slime_surf, slime_surf.get_rect(center=self.rect.center))
         except Exception: pass
 
-# --- FUNÇÃO DE FUNDO PARALLAX ---
-def desenhar_parallax_caverna(surface, camera_x):
-    # Camada 1: Fundo distante rochoso
-    offset_1 = (camera_x * 0.2) % 120
-    for i in range(-1, int(SCREEN_WIDTH / 120) + 2):
-        bx = i * 120 - offset_1
-        pygame.draw.polygon(surface, (25, 25, 30), [(bx, FLOOR_Y), (bx+40, FLOOR_Y-250), (bx+80, FLOOR_Y-200), (bx+120, FLOOR_Y)])
-        pygame.draw.polygon(surface, (25, 25, 30), [(bx, 0), (bx+50, 180), (bx+100, 130), (bx+120, 0)])
-
-    # Camada 2: Estalactites e riachos ao fundo
-    offset_2 = (camera_x * 0.4) % 200
+# --- FUNDO CAVERNA: ESTALACTITES, ESTALAGMITES E PEDRAS AFIADAS (SEM TOCHAS) ---
+def desenhar_parallax_caverna(surface: pygame.Surface, camera_x: float):
+    # Camada 1: Estalactites e Estalagmites Afiadas de Fundo Distante (0.15x)
+    offset_1 = (camera_x * 0.15) % 200
     for i in range(-1, int(SCREEN_WIDTH / 200) + 2):
-        bx = i * 200 - offset_2
-        pygame.draw.polygon(surface, (32, 32, 38), [(bx, FLOOR_Y), (bx+60, FLOOR_Y-150), (bx+120, FLOOR_Y)])
-        pygame.draw.polygon(surface, (32, 32, 38), [(bx+40, 0), (bx+80, 220), (bx+120, 0)])
+        bx = i * 200 - offset_1
+        # Estalagmites e pedras afiadas no chão
+        pygame.draw.polygon(surface, (18, 16, 24), [(bx, FLOOR_Y), (bx + 30, FLOOR_Y - 340), (bx + 60, FLOOR_Y)])
+        pygame.draw.polygon(surface, (15, 14, 20), [(bx + 80, FLOOR_Y), (bx + 115, FLOOR_Y - 260), (bx + 150, FLOOR_Y)])
+        
+        # Estalactites penduradas do teto
+        pygame.draw.polygon(surface, (18, 16, 24), [(bx + 15, 0), (bx + 50, 300), (bx + 85, 0)])
+        pygame.draw.polygon(surface, (15, 14, 20), [(bx + 105, 0), (bx + 135, 220), (bx + 165, 0)])
+
+    # Camada 2: Pilares rochosos e Formações de Pedras Afiadas Intermediárias (0.35x)
+    offset_2 = (camera_x * 0.35) % 260
+    for i in range(-1, int(SCREEN_WIDTH / 260) + 2):
+        bx = i * 260 - offset_2
+        # Colunas rochosas e rochas serrilhadas
+        pygame.draw.polygon(surface, (26, 24, 32), [(bx + 20, 0), (bx + 45, 240), (bx + 35, FLOOR_Y - 220), (bx + 65, FLOOR_Y), (bx + 5, FLOOR_Y), (bx + 10, 0)])
+        pygame.draw.polygon(surface, (22, 20, 28), [(bx + 140, FLOOR_Y), (bx + 175, FLOOR_Y - 180), (bx + 210, FLOOR_Y)]) # Pedra afiada no chão
+        pygame.draw.polygon(surface, (22, 20, 28), [(bx + 180, 0), (bx + 205, 160), (bx + 230, 0)])                   # Estalactite média no teto
 
 def main():
-    log_debug("=== INICIANDO SLIME DASH - TEMA CAVERNA E SLIME KAWAII ===")
+    log_debug("=== INICIANDO SLIME DASH - CORREÇÃO DE SQUASH E PARALLAX CAVERNA SEM TOCHAS ===")
     pygame.init()
     sound_mgr = SoundManager()
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
@@ -354,8 +409,9 @@ def main():
 
     slime = Slime(x=SLIME_START_X, y=FLOOR_Y)
     particles = []
+    decals = []
 
-    show_debug = False
+    show_debug = True
     causa_morte = ""
     morto_parado = False
     global_frame_count = 0
@@ -376,6 +432,7 @@ def main():
 
     def iniciar_fase():
         nonlocal estado_jogo, timer_intro_wait, distancia_percorrida, causa_morte, morto_parado, animando_vitoria, timer_anim_vitoria, vitoria, current_bg_color
+        log_debug(f"--- REINICIANDO DO INÍCIO (Tentativa {tentativas}) ---")
         estado_jogo = "INTRO_WAIT"
         timer_intro_wait = 0
         distancia_percorrida = 0.0
@@ -391,6 +448,7 @@ def main():
         slime.vel_y = 0
         slime.jump_buffer = 0
         slime.update_rect()
+        decals.clear()
         sound_mgr.iniciar_musica()
 
     def reset_game(motivo=""):
@@ -401,6 +459,10 @@ def main():
         tentativas += 1
         vitoria = False
         animando_vitoria = False
+
+        log_debug(f"💀 MORTE CONFIRMADA: {motivo}")
+        log_debug(f"   TELEMETRIA: Slime X={slime.x:.1f}, Y={slime.y:.1f} | Distância={distancia_percorrida:.1f}px")
+
         gerar_explosao_slime(slime.x, slime.y - 20, slime.color)
         sound_mgr.tocar(sound_mgr.sfx_death)
         sound_mgr.parar_musica()
@@ -437,12 +499,14 @@ def main():
                     if event.key == pygame.K_g: show_debug = not show_debug
                     elif event.key == pygame.K_i:
                         modo_imunidade_admin = not modo_imunidade_admin
+                        log_debug(f"Modo Imunidade Admin [I]: {'ATIVADO' if modo_imunidade_admin else 'DESATIVADO'}")
                         if morto_parado:
                             morto_parado = False
                             estado_jogo = "JOGANDO"
                             sound_mgr.reiniciar_musica()
                     elif event.key == pygame.K_c:
                         checkpoint_manual_admin = {"distancia": distancia_percorrida, "y": slime.y, "modo": slime.modo}
+                        log_debug(f"📌 CHECKPOINT SALVO | Dist: {distancia_percorrida:.1f}px | Y: {slime.y:.1f} | Modo: {slime.modo}")
                     elif event.key == pygame.K_v and checkpoint_manual_admin:
                         distancia_percorrida = checkpoint_manual_admin["distancia"]
                         slime.mudar_modo(checkpoint_manual_admin["modo"])
@@ -450,14 +514,17 @@ def main():
                         slime.vel_y = 0.0
                         morto_parado = False
                         estado_jogo = "JOGANDO"
+                        log_debug("🚀 TELEPORTE PARA CHECKPOINT EXECUTADO!")
                     elif event.key == pygame.K_LEFT:
                         distancia_percorrida = max(0.0, distancia_percorrida - 250.0)
+                        log_debug(f"⏪ Câmera Recuada: {distancia_percorrida:.1f}px")
                         if morto_parado:
                             morto_parado = False
                             estado_jogo = "JOGANDO"
                             sound_mgr.reiniciar_musica()
                     elif event.key == pygame.K_RIGHT:
                         distancia_percorrida = min(distancia_total_musica, distancia_percorrida + 250.0)
+                        log_debug(f"⏩ Câmera Avançada: {distancia_percorrida:.1f}px")
                         if morto_parado:
                             morto_parado = False
                             estado_jogo = "JOGANDO"
@@ -473,7 +540,7 @@ def main():
                             elif estado_jogo == "PAUSADO":
                                 estado_jogo = "JOGANDO"
                                 sound_mgr.reiniciar_musica()
-                        elif event.key == pygame.K_r and estado_jogo != "MENU": reset_game("RECOMEÇO VOLUNTÁRIO")
+                        elif event.key == pygame.K_r and estado_jogo != "MENU": reset_game("RECOMEÇO VOLUNTÁRIO (TECLA R)")
                         elif event.key == pygame.K_m:
                             estado_jogo = "MENU"
                             sound_mgr.parar_musica()
@@ -491,7 +558,11 @@ def main():
 
             frames_contador += 1
             if frames_contador % frames_por_batida == 0: beat_pulse = 1.0
-            else: beat_pulse = max(0.0, beat_pulse - 0.1)
+            else: beat_pulse = max(0.0, beat_pulse - 0.05)
+
+            # Partículas Esporos Caverna
+            if estado_jogo == "JOGANDO" and random.random() < 0.15:
+                particles.append(Particle(random.uniform(0, SCREEN_WIDTH), random.uniform(0, CEILING_Y+150), (100, 255, 100), vel_x=-1.5, vel_y=random.uniform(0.5, 1.2), gravity=0, size=2, lifespan=255))
 
             bg_flash_alpha = max(0.0, bg_flash_alpha - 0.015)
 
@@ -527,12 +598,12 @@ def main():
                     if not animando_vitoria:
                         slime_prev_y = slime.y
                         distancia_percorrida += scroll_speed
-                        slime.update(FLOOR_Y, CEILING_Y, particles, space_held, sound_mgr, trigger_flash)
+                        slime.update(FLOOR_Y, CEILING_Y, particles, space_held, sound_mgr, trigger_flash, distancia_percorrida, decals)
                         attempt_text_x = (SCREEN_WIDTH // 2) - distancia_percorrida
 
                         if slime.modo == "CHICLETE" and slime.imunidade_portal == 0 and not modo_imunidade_admin:
-                            if slime.y <= CEILING_Y + 15: reset_game("Chiclete bateu no TETO!")
-                            elif slime.y >= FLOOR_Y - 5: reset_game("Chiclete bateu no CHÃO!")
+                            if slime.y <= CEILING_Y + 15: reset_game("Chiclete bateu no TETO do Mapa!")
+                            elif slime.y >= FLOOR_Y - 5: reset_game("Chiclete bateu no CHÃO do Mapa!")
                     else:
                         timer_anim_vitoria += 1
                         fim_x_tela = fim_fase_x_relativo + TARGET_X - distancia_percorrida
@@ -540,19 +611,13 @@ def main():
                         slime.x += (fim_x_tela - slime.x) * 0.15
                         slime.y += (vortex_center_y - slime.y) * 0.15
                         slime.update_rect()
-                        for _ in range(2):
-                            ang = random.uniform(0, math.pi * 2)
-                            rad = random.uniform(20, 60)
-                            px = fim_x_tela + math.cos(ang) * rad
-                            py = vortex_center_y + math.sin(ang) * rad
-                            particles.append(Particle(px, py, (180, 50, 255), vel_x=(fim_x_tela - px)*0.1, vel_y=(vortex_center_y - py)*0.1))
                         if timer_anim_vitoria >= 60:
                             animando_vitoria = False
                             vitoria = True
 
             for p in particles[:]:
                 p.update()
-                if p.radius <= 0: particles.remove(p)
+                if p.radius <= 0 or p.lifespan <= 0: particles.remove(p)
 
             espinhos_chao_rects, espinhos_teto_rects, lavas_rects = [], [], []
             blocos_rects, trampolins_rects, orbes_rects = [], [], []
@@ -573,6 +638,7 @@ def main():
                     elif char == "O" and col_idx not in moedas_pegas_ids: moedas.append((pygame.Rect(obj_x + 12, y_pos + 12, 36, 36), col_idx))
 
             slime_hb = slime.get_hitbox()
+            slime_ground_hb = slime.get_ground_check_hitbox()
 
             if estado_jogo == "JOGANDO" and not vitoria and not morto_parado and not animando_vitoria:
                 for portal_rect, tipo in portais:
@@ -585,18 +651,23 @@ def main():
                     if slime_hb.colliderect(pad):
                         slime.vel_y = -22.5
                         slime.is_grounded = False
+                        slime.current_width, slime.current_height = 18.0, 75.0
+                        log_debug(f"⚡ TRAMPOLIM ACIONADO! PosY={slime.y:.1f}")
                         sound_mgr.tocar(sound_mgr.sfx_pad)
 
                 for orb in orbes_rects:
                     if slime_hb.colliderect(orb) and space_held and slime.jump_buffer > 0:
                         slime.vel_y = -18.5
                         slime.jump_buffer = 0
+                        slime.current_width, slime.current_height = 20.0, 65.0
+                        log_debug(f"✨ ORBE ACIONADO! PosY={slime.y:.1f}")
                         sound_mgr.tocar(sound_mgr.sfx_jump)
 
                 for coin_rect, coin_id in moedas:
                     if slime_hb.colliderect(coin_rect):
                         moedas_pegas_ids.add(coin_id)
                         moedas_coletadas += 1
+                        log_debug(f"🪙 MOEDA COLETADA! Total={moedas_coletadas}/3")
                         sound_mgr.tocar(sound_mgr.sfx_coin)
 
                 if not modo_imunidade_admin:
@@ -609,7 +680,8 @@ def main():
 
                 em_cima_de_bloco = False
                 for block, c_idx, orig_y in blocos_rects:
-                    if slime_hb.colliderect(block):
+                    # USAMOS slime_ground_hb (COM 1PX EXTRA PARA BAIXO) PARA CHECAGEM CONTÍNUA DO CHÃO
+                    if slime_ground_hb.colliderect(block):
                         if slime.modo == "CHICLETE":
                             if slime.imunidade_portal == 0 and not modo_imunidade_admin:
                                 reset_game(f"Colisão de Voo com Bloco (Coluna {c_idx})")
@@ -619,8 +691,7 @@ def main():
                             if slime.gravity > 0:
                                 if pes_acima_do_topo and slime.vel_y >= 0:
                                     slime.y = float(block.top)
-                                    slime.vel_y = 0.0
-                                    slime.is_grounded = True
+                                    slime.aplicar_impacto_chao(f"Bloco Coluna {c_idx}", distancia_percorrida, decals)
                                     em_cima_de_bloco = True
                                     slime.update_rect()
                                     slime.tentar_pular(sound_mgr, trigger_flash)
@@ -637,8 +708,7 @@ def main():
                                 pes_no_fundo = (slime.y - 38 >= block.bottom - 12) or (slime_prev_y - 38 >= block.bottom - 12)
                                 if pes_no_fundo and slime.vel_y <= 0:
                                     slime.y = float(block.bottom + 38)
-                                    slime.vel_y = 0.0
-                                    slime.is_grounded = True
+                                    slime.aplicar_impacto_chao(f"Bloco Invertido Coluna {c_idx}", distancia_percorrida, decals)
                                     em_cima_de_bloco = True
                                     slime.update_rect()
                                     slime.tentar_pular(sound_mgr, trigger_flash)
@@ -659,7 +729,7 @@ def main():
             final_bg = (int(current_bg_color[0]), int(current_bg_color[1]), int(current_bg_color[2]))
             screen.fill(final_bg)
 
-            # --- PARALLAX DE FUNDO (Caverna) ---
+            # Parallax da Caverna (Estalactites, Estalagmites e Pedras Afiadas - SEM TOCHAS)
             desenhar_parallax_caverna(screen, distancia_percorrida)
 
             if bg_flash_alpha > 0:
@@ -670,25 +740,51 @@ def main():
             pygame.draw.rect(screen, COLOR_FLOOR, (0, FLOOR_Y, SCREEN_WIDTH, SCREEN_HEIGHT - FLOOR_Y))
             pygame.draw.rect(screen, COLOR_FLOOR, (0, 0, SCREEN_WIDTH, CEILING_Y))
 
-            # Renderizar Lava Vermelha Texturizada
+            # Grama/Musgo no Chão e no Teto
+            pygame.draw.rect(screen, COLOR_MOSS, (0, FLOOR_Y, SCREEN_WIDTH, 4))
+            for gx in range(0, SCREEN_WIDTH, 12):
+                pygame.draw.polygon(screen, COLOR_MOSS, [(gx, FLOOR_Y), (gx + 4, FLOOR_Y - 4), (gx + 8, FLOOR_Y)])
+            pygame.draw.rect(screen, COLOR_MOSS, (0, CEILING_Y - 4, SCREEN_WIDTH, 4))
+
+            # Desenha as Manchas de Gosma dos Pousos
+            offset_camera = TARGET_X - distancia_percorrida
+            for dec in decals: dec.draw(screen, offset_camera)
+
+            # Lava
             for lva, _ in lavas_rects:
                 pygame.draw.rect(screen, COLOR_LAVA_BASE, lva)
-                # Efeito de bolhas / ondas de magma animadas
                 onda_offset = (global_frame_count * 2) % 20
                 for lx in range(lva.x, lva.right, 20):
                     pygame.draw.line(screen, COLOR_LAVA_DETAIL, (lx - onda_offset, lva.y + 4), (lx + 10 - onda_offset, lva.y + 4), 2)
-                    pygame.draw.line(screen, COLOR_LAVA_DETAIL, (lx + onda_offset, lva.y + 10), (lx + 10 + onda_offset, lva.y + 10), 2)
+                if estado_jogo == "JOGANDO" and random.random() < 0.08:
+                    particles.append(Particle(random.uniform(lva.x, lva.right), lva.y+5, (255, 120, 0), vel_x=-scroll_speed, vel_y=random.uniform(-3, -1), gravity=0.1, size=random.randint(2,4)))
 
             for spike, _ in espinhos_chao_rects: pygame.draw.polygon(screen, COLOR_SPIKE, [(spike.x - 4, spike.bottom), (spike.centerx, spike.top), (spike.right + 4, spike.bottom)])
             for spike_top, _ in espinhos_teto_rects: pygame.draw.polygon(screen, COLOR_SPIKE, [(spike_top.x - 4, spike_top.top), (spike_top.centerx, spike_top.bottom), (spike_top.right + 4, spike_top.top)])
             
+            # BLOCOS DE PEDRA COM GRAMA/MUSGO NO TOPO
+            current_block_border = COLOR_BORDER_GOSMA
+            if slime.modo == "CHICLETE": current_block_border = COLOR_BORDER_CHICLETE
+            elif slime.modo == "NEVE": current_block_border = COLOR_BORDER_NEVE
+
             for block, _, _ in blocos_rects:
                 pygame.draw.rect(screen, COLOR_BLOCK, block)
-                pygame.draw.rect(screen, COLOR_BLOCK_BORDER, block, 2) # Borda Estilo GD / Musgo
-                # Textura de pedra sutil no centro
+                pygame.draw.rect(screen, current_block_border, block, 2) 
                 pygame.draw.rect(screen, (30, 30, 35), (block.x + 10, block.y + 10, TILE_SIZE - 20, TILE_SIZE - 20))
+                # Cobertura de musgo/grama no topo de cada bloco
+                pygame.draw.rect(screen, COLOR_MOSS, (block.x, block.y, TILE_SIZE, 3))
+                pygame.draw.line(screen, (20, 20, 25), (block.x + 15, block.y + 15), (block.x + 25, block.y + 30), 2)
 
-            for pad in trampolins_rects: pygame.draw.rect(screen, COLOR_PAD, pad, border_radius=3)
+            # Trampolins com Glow
+            for pad in trampolins_rects: 
+                pad_color = COLOR_PAD
+                if beat_pulse > 0:
+                    glow_pad = pygame.Surface((pad.width + 10, pad.height + 10), pygame.SRCALPHA)
+                    glow_pad.fill((255, 255, 100, int(beat_pulse * 150)))
+                    screen.blit(glow_pad, (pad.x - 5, pad.y - 5))
+                    pad_color = (255, 255, 150)
+                pygame.draw.rect(screen, pad_color, pad, border_radius=3)
+
             for orb in orbes_rects:
                 pygame.draw.circle(screen, COLOR_RING, orb.center, 14, 3)
                 pygame.draw.circle(screen, (255, 255, 255), orb.center, 6)
@@ -718,7 +814,7 @@ def main():
 
             if show_debug and estado_jogo != "MENU":
                 pygame.draw.rect(screen, (0, 255, 0), slime_hb, 2)
-                info_text = f"FPS: {dt_fps:.1f} | X: {slime.x:.1f} Y: {slime.y:.1f} | Imunidade [I]: {'ON' if modo_imunidade_admin else 'OFF'}"
+                info_text = f"FPS: {dt_fps:.1f} | X: {slime.x:.1f} Y: {slime.y:.1f} | Modo: {slime.modo} | Imunidade [I]: {'ON' if modo_imunidade_admin else 'OFF'}"
                 lbl_info = debug_font.render(info_text, True, (255, 255, 0) if modo_imunidade_admin else (255, 255, 255))
                 pygame.draw.rect(screen, (0, 0, 0), (10, SCREEN_HEIGHT - 30, lbl_info.get_width() + 10, 22))
                 screen.blit(lbl_info, (15, SCREEN_HEIGHT - 28))
